@@ -1,6 +1,7 @@
 #include "exfat.hpp"
 #include "vfs_blk_adapter.hpp"
 #include "kernel/allocator.hpp"
+#include <new>
 
 namespace exfat {
 
@@ -84,7 +85,22 @@ static void copy_memory(void* dst, const void* src, size_t size)
         d[i] = s[i];
 }
 
-ExFatReader exfat_fs;
+// Do not instantiate ExFatReader as a global C++ object.
+// BlockOS is a freestanding EFI kernel and does not provide the normal
+// C++ runtime symbol __dso_handle used by global constructors/destructors.
+// Keep only raw aligned storage at static scope and construct the reader
+// explicitly when exFAT is first used.
+alignas(ExFatReader) static uint8_t g_exfat_storage[sizeof(ExFatReader)];
+static bool g_exfat_constructed = false;
+
+static ExFatReader* get_exfat_reader()
+{
+    if (!g_exfat_constructed) {
+        ::new (static_cast<void*>(g_exfat_storage)) ExFatReader();
+        g_exfat_constructed = true;
+    }
+    return reinterpret_cast<ExFatReader*>(g_exfat_storage);
+}
 
 ExFatReader::ExFatReader()
     : volume_{}, ready_(false), cluster_buffer_(nullptr),
@@ -796,15 +812,16 @@ bool ExFatReader::write_file(const char* path, const uint8_t* data,
 
 bool exfat_init()
 {
-    return exfat_fs.initialize();
+    return get_exfat_reader()->initialize();
 }
 
 bool exfat_read_file(const char* path, uint8_t* dest, size_t max_size,
                      size_t* bytes_read)
 {
-    if (!exfat_fs.ready() && !exfat_fs.initialize())
+    ExFatReader* reader = get_exfat_reader();
+    if (!reader->ready() && !reader->initialize())
         return false;
-    return exfat_fs.read_file(path, dest, max_size, bytes_read);
+    return reader->read_file(path, dest, max_size, bytes_read);
 }
 
 } // namespace exfat
