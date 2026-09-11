@@ -213,7 +213,7 @@ static vfs_entry* allocate_entry(
     size_t name_len = string_length(normalized);
 
     char* name =
-        static_cast<char*>(kmalloc(name_len + 1));
+        static_cast<char*>(allocator::alloc(name_len + 1));
 
     if (!name)
         return nullptr;
@@ -222,11 +222,11 @@ static vfs_entry* allocate_entry(
         name[i] = normalized[i];
 
     vfs_entry* entry =
-        static_cast<vfs_entry*>(kmalloc(sizeof(vfs_entry)));
+        static_cast<vfs_entry*>(allocator::alloc(sizeof(vfs_entry)));
 
     if (!entry)
     {
-        kfree(name);
+        allocator::free(name);
         return nullptr;
     }
 
@@ -262,17 +262,17 @@ static void free_entry(vfs_entry* entry)
 
     if (entry->data)
     {
-        kfree(entry->data);
+        allocator::free(entry->data);
         entry->data = nullptr;
     }
 
     if (entry->name)
     {
-        kfree(entry->name);
+        allocator::free(entry->name);
         entry->name = nullptr;
     }
 
-    kfree(entry);
+    allocator::free(entry);
 }
 
 static bool make_device_path(
@@ -511,7 +511,7 @@ bool create_file(
     if (size > 0)
     {
         entry->data =
-            static_cast<uint8_t*>(kmalloc(size));
+            static_cast<uint8_t*>(allocator::alloc(size));
 
         if (!entry->data)
         {
@@ -571,7 +571,7 @@ bool write_file(
     if (size > 0)
     {
         new_data =
-            static_cast<uint8_t*>(kmalloc(size));
+            static_cast<uint8_t*>(allocator::alloc(size));
 
         if (!new_data)
             return false;
@@ -581,7 +581,7 @@ bool write_file(
     }
 
     if (entry->data)
-        kfree(entry->data);
+        allocator::free(entry->data);
 
     entry->data = new_data;
     entry->size = size;
