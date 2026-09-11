@@ -85,7 +85,7 @@ SRC_DIRS := \
 	fs \
 	kernel \
 	libc/src \
-	hal
+	net
 
 S_SRC_DIRS := \
 	drivers \
