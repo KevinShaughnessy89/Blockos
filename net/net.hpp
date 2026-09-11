@@ -24,13 +24,6 @@ struct IPv4Address {
     }
 };
 
-/*
- * Network byte order helpers.
- *
- * BlockOS does not depend on the host libc/networking API here.
- * These are implemented directly for the freestanding environment.
- */
-
 constexpr uint16_t htons(uint16_t x) {
     return uint16_t((x << 8) | (x >> 8));
 }
@@ -60,22 +53,15 @@ IPv4Address ip_address();
 IPv4Address netmask();
 IPv4Address gateway();
 
-void set_ipv4(
-    const IPv4Address& ip,
-    const IPv4Address& mask,
-    const IPv4Address& gw
-);
+void set_ipv4(const IPv4Address& ip,
+              const IPv4Address& mask,
+              const IPv4Address& gw);
 
-bool send_frame(
-    const uint8_t dst[6],
-    uint16_t ethertype,
-    const void* payload,
-    size_t payload_len
-);
+bool send_frame(const uint8_t dst[6],
+                uint16_t ethertype,
+                const void* payload,
+                size_t payload_len);
 
-void input_frame(
-    const void* frame,
-    size_t len
-);
+void input_frame(const void* frame, size_t len);
 
 } // namespace blockos::net
