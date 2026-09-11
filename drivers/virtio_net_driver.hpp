@@ -5,6 +5,7 @@
 namespace virtio_net {
 
 bool init();
+
 bool is_available();
 
 bool send_packet(
@@ -18,10 +19,6 @@ int receive_packet(
 );
 
 void reclaim_tx();
-
-// ------------------------------------------------------------
-// MAC address
-// ------------------------------------------------------------
 
 bool get_mac_address(
     uint8_t out_mac[6]
