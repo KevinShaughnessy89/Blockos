@@ -1,2 +1,7 @@
 #include <unistd.h>
-int main(void){ const char s[]="Hello from BlockOS POSIX!\n"; return write(1,s,sizeof(s)-1)<0; }
+
+int main(void)
+{
+    static const char msg[] = "Hello from BlockOS!\n";
+    return write(1, msg, sizeof(msg) - 1) < 0;
+}

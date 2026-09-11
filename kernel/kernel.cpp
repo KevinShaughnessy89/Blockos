@@ -4,7 +4,7 @@
 #include "cmd/cmd_forth.hpp"
 #include "cmd/command.hpp"
 #include "console.hpp"
-#include "drivers/Keymap.hpp"
+#include "drivers/keymap.hpp"
 #include "drivers/ata_devices.hpp"
 #include "events.hpp"
 #include "font8x8.h"
@@ -15,6 +15,7 @@
 #include "shell.hpp"
 #include "sysmem.hpp"
 #include "vfs.hpp"
+#include "process.hpp"
 #include "virtio_input.hpp"
 
 
@@ -32,6 +33,24 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 
+static inline void early_serial_out(char c)
+{
+    asm volatile("outb %0, $0x3F8" : : "a"(c));
+}
+
+static void early_serial_str(const char* s)
+{
+    while (*s) early_serial_out(*s++);
+}
+
+__attribute__((constructor(101)))
+static void boot_marker_a(void) { early_serial_str("A"); }
+
+__attribute__((constructor(200)))
+static void boot_marker_b(void) { early_serial_str("B"); }
+
+__attribute__((constructor(65000)))
+static void boot_marker_c(void) { early_serial_str("C\n"); }
 
 struct Window
 {
@@ -506,7 +525,7 @@ static void init_block_devices(Console& out)
     if (g_ata_fs.present())
     {
         legacy_fat32_fs.attach(g_ata_fs);
-        legacy_fat32_fs.initialize_fat32();
+        legacy_fat32_fs.initialize();
     }
 }
 
@@ -542,6 +561,21 @@ static void run_command(const Args& args, Console& out)
     if (written > 0)
     {
         out.print(output);
+        return;
+    }
+
+    char path[128];
+    size_t n = 0;
+    path[n++] = '/'; path[n++] = 'b'; path[n++] = 'i'; path[n++] = 'n'; path[n++] = '/';
+    for (size_t i = 0; name[i] && n + 1 < sizeof(path); ++i) path[n++] = name[i];
+    path[n] = '\0';
+    uint32_t elf_size = 0;
+    const uint8_t* elf = vfs::read_file(path, &elf_size);
+    if (elf)
+    {
+        process::Process* p = process::create(elf, elf_size);
+        if (!p) { out.print("exec: ELF load failed"); out.newline(); return; }
+        process::run(p);
         return;
     }
 
@@ -1028,8 +1062,8 @@ extern "C" EFI_STATUS EFIAPI efi_main(
         0,
         0};
 
-    static Console console;
-    static Shell shell;
+    Console console;
+    Shell shell;
 
     bool splash_active = true;
 
@@ -1058,6 +1092,9 @@ extern "C" EFI_STATUS EFIAPI efi_main(
     blockos_stdio_set_console(stdio_sink);
 
     printf("BlockOS console\n");
+
+    vfs_init_from_ramfs();
+    process::init();
 
     // console.print("commands: ");
 
