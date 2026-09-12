@@ -33,7 +33,6 @@ constexpr uint32_t RX_BUFFER_SIZE = 2048;
 
 constexpr uint32_t VIRTIO_NET_HDR_SIZE = 10;
 
-// Legacy VirtIO PCI registers.
 constexpr uint16_t REG_HOST_FEATURES   = 0x00;
 constexpr uint16_t REG_GUEST_FEATURES  = 0x04;
 constexpr uint16_t REG_GUEST_PAGE_SIZE = 0x08;
@@ -43,31 +42,18 @@ constexpr uint16_t REG_QUEUE_PFN       = 0x10;
 constexpr uint16_t REG_QUEUE_NOTIFY    = 0x10;
 constexpr uint16_t REG_STATUS          = 0x12;
 
-// Legacy VirtIO-net device configuration.
-// MAC begins at offset 0.
 constexpr uint16_t NET_CONFIG_MAC = 0x14;
 
-// VirtIO status bits.
 constexpr uint8_t STATUS_ACKNOWLEDGE = 1;
 constexpr uint8_t STATUS_DRIVER      = 2;
 constexpr uint8_t STATUS_DRIVER_OK   = 4;
 constexpr uint8_t STATUS_FEATURES_OK = 8;
 constexpr uint8_t STATUS_FAILED      = 128;
 
-// VirtIO-net feature.
 constexpr uint32_t VIRTIO_NET_F_MAC = 1u << 5;
 
-// Descriptor flags.
 constexpr uint16_t VRING_DESC_F_WRITE = 2;
 
-// DMA queue memory.
-//
-// 128 descriptors = 2048 bytes.
-// avail = 260 bytes.
-// used starts at 4096 alignment.
-// used = 1028 bytes.
-//
-// 8192 is enough, 16384 gives extra room.
 constexpr size_t QUEUE_MEMORY_SIZE = 16384;
 
 static virtio_common::DeviceHandle g_device{};
@@ -375,7 +361,6 @@ static bool setup_legacy_queue(
     if (memory == nullptr)
         return false;
 
-    // Select queue.
     write_reg16(
         REG_QUEUE_SELECT,
         queue_index
@@ -395,12 +380,9 @@ static bool setup_legacy_queue(
     if (actual_size > max_size)
         actual_size = max_size;
 
-    // This implementation expects the queue view to match
-    // the selected queue size.
     if (actual_size != requested_size)
         return false;
 
-    // Queue must be page aligned.
     const uintptr_t address =
         reinterpret_cast<uintptr_t>(
             memory
@@ -409,7 +391,6 @@ static bool setup_legacy_queue(
     if ((address & 4095u) != 0)
         return false;
 
-    // Build queue view.
     *view =
         virtqueue_ops::view_from_mem(
             memory,
@@ -427,10 +408,6 @@ static bool setup_legacy_queue(
         view
     );
 
-    // Legacy VirtIO uses physical page number.
-    //
-    // BlockOS currently uses the DMA allocator's identity-mapped
-    // memory region, so the pointer value is the DMA address.
     const uint32_t pfn =
         static_cast<uint32_t>(
             address >> 12
@@ -441,7 +418,6 @@ static bool setup_legacy_queue(
         pfn
     );
 
-    // Verify PFN.
     const uint32_t readback =
         read_reg32(
             REG_QUEUE_PFN
@@ -490,9 +466,8 @@ static bool prepare_rx_descriptor(
             )
         );
 
-    // Device writes into this descriptor.
     virtqueue_ops::set_descriptor(
-        &g_rx_vq,
+        &virtio_net::g_rx_vq,
         index,
         address,
         RX_BUFFER_SIZE,
@@ -501,7 +476,7 @@ static bool prepare_rx_descriptor(
     );
 
     virtqueue_ops::submit_descriptor(
-        &g_rx_vq,
+        &virtio_net::g_rx_vq,
         index
     );
 
@@ -520,12 +495,9 @@ static bool initialize_rx_queue()
          ++i)
     {
         if (!prepare_rx_descriptor(i))
-        {
             return false;
-        }
     }
 
-    // Tell the device that RX descriptors are available.
     notify_queue(
         RX_QUEUE
     );
@@ -540,48 +512,20 @@ static bool initialize_rx_queue()
 
 static bool read_mac()
 {
+    volatile uint8_t* base =
+        reinterpret_cast<volatile uint8_t*>(
+            static_cast<UINTN>(
+                g_device.bar0 +
+                NET_CONFIG_MAC
+            )
+        );
+
     for (uint32_t i = 0;
          i < 6;
          ++i)
     {
-        if (g_device.mmio)
-        {
-            volatile uint8_t* p =
-                reinterpret_cast<volatile uint8_t*>(
-                    static_cast<UINTN>(
-                        g_device.bar0 +
-                        NET_CONFIG_MAC +
-                        i
-                    )
-                );
-
-            g_mac[i] = *p;
-        }
-        else
-        {
-            g_mac[i] =
-                pci_cfg_read8(
-                    g_device.bus,
-                    g_device.slot,
-                    g_device.func,
-                    static_cast<uint8_t>(
-                        0
-                    )
-                );
-
-            // Legacy PCI VirtIO device configuration is in BAR0,
-            // not PCI configuration space.
-            volatile uint8_t* p =
-                reinterpret_cast<volatile uint8_t*>(
-                    static_cast<UINTN>(
-                        g_device.bar0 +
-                        NET_CONFIG_MAC +
-                        i
-                    )
-                );
-
-            g_mac[i] = *p;
-        }
+        g_mac[i] =
+            base[i];
     }
 
     bool all_zero = true;
@@ -599,7 +543,6 @@ static bool read_mac()
     if (all_zero || all_ff)
         return false;
 
-    // Multicast MAC is not valid as the interface address.
     if (g_mac[0] & 1)
         return false;
 
@@ -618,7 +561,6 @@ static bool negotiate_features()
             REG_HOST_FEATURES
         );
 
-    // We only require the MAC feature.
     const uint32_t wanted =
         VIRTIO_NET_F_MAC;
 
@@ -650,24 +592,20 @@ static bool negotiate_features()
 
 static bool initialize_device()
 {
-    // Reset.
     write_status(0);
 
     if (read_status() != 0)
         return false;
 
-    // ACKNOWLEDGE.
     write_status(
         STATUS_ACKNOWLEDGE
     );
 
-    // DRIVER.
     write_status(
         STATUS_ACKNOWLEDGE |
         STATUS_DRIVER
     );
 
-    // Page size for legacy transport.
     write_reg32(
         REG_GUEST_PAGE_SIZE,
         4096
@@ -676,18 +614,16 @@ static bool initialize_device()
     if (read_reg32(REG_GUEST_PAGE_SIZE) != 4096)
         return false;
 
-    // Feature negotiation.
     if (!negotiate_features())
         return false;
 
-    // FEATURES_OK.
     write_status(
         STATUS_ACKNOWLEDGE |
         STATUS_DRIVER |
         STATUS_FEATURES_OK
     );
 
-    uint8_t status =
+    const uint8_t status =
         read_status();
 
     if ((status & STATUS_FEATURES_OK) == 0)
@@ -741,18 +677,39 @@ VirtQueueView g_rx_vq{};
 TxSlot g_tx_slots[256]{};
 
 
+// ------------------------------------------------------------
+// TX slot helper
+// ------------------------------------------------------------
+
+static void clear_tx_slot(
+    uint32_t index
+)
+{
+    if (index >= 256)
+        return;
+
+    g_tx_slots[index].buf = nullptr;
+    g_tx_slots[index].submit_tick = 0;
+}
+
+
+// ------------------------------------------------------------
+// TX buffer pool
+// ------------------------------------------------------------
+
 void tx_pool_push(void* buf)
 {
     /*
-     * The current BlockOS allocator does not yet expose a
-     * dma::free() operation.
-     *
-     * Therefore buffers remain allocated until the network
-     * subsystem is destroyed/reset.
+     * BlockOS DMA allocator currently does not expose dma::free().
+     * The buffer therefore remains allocated.
      */
     (void)buf;
 }
 
+
+// ------------------------------------------------------------
+// Initialization
+// ------------------------------------------------------------
 
 bool init()
 {
@@ -816,12 +773,6 @@ bool init()
         return false;
     }
 
-    /*
-     * This implementation targets the legacy PCI VirtIO transport.
-     *
-     * A modern-only PCI device requires PCI capability parsing,
-     * which is a separate transport implementation.
-     */
     if (g_device.mmio)
     {
         Print(
@@ -860,7 +811,6 @@ bool init()
         return false;
     }
 
-    // Allocate queue memory.
     g_rx_queue_mem =
         dma::alloc(
             QUEUE_MEMORY_SIZE,
@@ -905,7 +855,6 @@ bool init()
         QUEUE_MEMORY_SIZE
     );
 
-    // Queue 0 = RX.
     if (!setup_legacy_queue(
             RX_QUEUE,
             &g_rx_vq,
@@ -920,7 +869,6 @@ bool init()
         return false;
     }
 
-    // Queue 1 = TX.
     if (!setup_legacy_queue(
             TX_QUEUE,
             &g_tx_vq,
@@ -935,7 +883,6 @@ bool init()
         return false;
     }
 
-    // RX descriptors must exist before DRIVER_OK.
     if (!initialize_rx_queue())
     {
         Print(
@@ -948,7 +895,6 @@ bool init()
 
     g_queues_ready = true;
 
-    // Now the device may start processing queues.
     if (!start_device())
     {
         Print(
@@ -959,7 +905,6 @@ bool init()
         return false;
     }
 
-    // Notify RX again after DRIVER_OK.
     notify_queue(
         RX_QUEUE
     );
@@ -976,11 +921,19 @@ bool init()
 }
 
 
+// ------------------------------------------------------------
+// Availability
+// ------------------------------------------------------------
+
 bool is_available()
 {
     return g_ready;
 }
 
+
+// ------------------------------------------------------------
+// MAC address
+// ------------------------------------------------------------
 
 bool get_mac_address(
     uint8_t out_mac[6]
@@ -1002,6 +955,10 @@ bool get_mac_address(
 }
 
 
+// ------------------------------------------------------------
+// TX
+// ------------------------------------------------------------
+
 bool send_packet(
     const void* data,
     unsigned len
@@ -1016,12 +973,6 @@ bool send_packet(
     if (data == nullptr || len == 0)
         return false;
 
-    /*
-     * VirtIO-net packet:
-     *
-     *   virtio_net_hdr   10 bytes
-     *   Ethernet frame   N bytes
-     */
     const size_t total =
         VIRTIO_NET_HDR_SIZE +
         static_cast<size_t>(len);
@@ -1029,6 +980,11 @@ bool send_packet(
     if (total > RX_BUFFER_SIZE)
         return false;
 
+    /*
+     * Reclaim completed TX descriptors first.
+     *
+     * reclaim_tx() is provided by the VirtIO TX implementation.
+     */
     reclaim_tx();
 
     for (uint32_t i = 0;
@@ -1067,10 +1023,6 @@ bool send_packet(
                 )
             );
 
-        /*
-         * TX descriptor is read by the device,
-         * therefore VRING_DESC_F_WRITE is NOT set.
-         */
         virtqueue_ops::set_descriptor(
             &g_tx_vq,
             i,
@@ -1088,45 +1040,20 @@ bool send_packet(
         g_tx_slots[i].buf =
             packet;
 
-        g_tx_slots[i].submit_tick =
-          if ((now - submitted) <= TIMEOUT_TICKS) {
-            continue;
-        }
+        /*
+         * The current TxSlot structure stores submit_tick.
+         * No platform timer is required for the initial submission.
+         */
+        g_tx_slots[i].submit_tick = 0;
 
-        CHAR16 msg[128];
-
-        UnicodeSPrint(
-            msg,
-            sizeof(msg),
-            (const CHAR16*)
-                L"virtio-net: TX timeout slot %u\n",
-            i
+        notify_queue(
+            TX_QUEUE
         );
 
-        Print(msg);
-
-        void* pending =
-            g_tx_slots[i].buf;
-
-        if (pending != nullptr) {
-            tx_pool_push(
-                pending
-            );
-        }
-
-        clear_tx_slot(
-            i
-        );
-
-        virtqueue_ops::set_descriptor(
-            &g_tx_vq,
-            i,
-            0,
-            0,
-            0,
-            0
-        );
+        return true;
     }
+
+    return false;
 }
 
 } // namespace virtio_net
