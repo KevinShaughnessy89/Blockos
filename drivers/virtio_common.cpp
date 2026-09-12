@@ -326,26 +326,21 @@ namespace
     constexpr uint32_t REG_ISR             = 0x13;
     constexpr uint32_t REG_DEVICE_CONFIG   = 0x14;
 
-    // VirtIO status bits.
     constexpr uint8_t STATUS_ACKNOWLEDGE = 0x01;
     constexpr uint8_t STATUS_DRIVER      = 0x02;
     constexpr uint8_t STATUS_DRIVER_OK   = 0x04;
     constexpr uint8_t STATUS_FEATURES_OK = 0x08;
     constexpr uint8_t STATUS_FAILED      = 0x80;
 
-    // VirtIO Network feature:
-    // VIRTIO_NET_F_MAC = bit 5.
     constexpr uint32_t VIRTIO_NET_F_MAC =
         (1u << 5);
 
-    // Legacy VirtIO network PCI IDs.
     constexpr uint16_t VIRTIO_VENDOR_ID =
         0x1AF4;
 
     constexpr uint16_t VIRTIO_NET_LEGACY_DEVICE_ID =
         0x1000;
 
-    // Transitional/modern network device ID.
     constexpr uint16_t VIRTIO_NET_MODERN_DEVICE_ID =
         0x1041;
 }
@@ -362,7 +357,7 @@ bool virtio_common::probe_device(
     if (!h)
         return false;
 
-    memset(
+    blockos_memset(
         h,
         0,
         sizeof(*h)
@@ -429,23 +424,12 @@ bool virtio_common::probe_device(
                     continue;
 
                 h->device_id = device;
-
-                h->bus =
-                    (uint8_t)bus;
-
-                h->slot =
-                    (uint8_t)slot;
-
-                h->func =
-                    (uint8_t)func;
-
-                h->bar0 =
-                    bar;
-
+                h->bus = (uint8_t)bus;
+                h->slot = (uint8_t)slot;
+                h->func = (uint8_t)func;
+                h->bar0 = bar;
                 h->mmio = false;
-
-                h->vendor_id =
-                    vendor;
+                h->vendor_id = vendor;
 
                 h->irq =
                     pci_cfg_read8(
@@ -501,7 +485,6 @@ static bool virtio_reset(
         0
     );
 
-    // Make sure the device observed reset.
     for (volatile uint32_t i = 0;
          i < 10000;
          ++i)
@@ -537,13 +520,6 @@ static bool negotiate_legacy_network_features(
             REG_HOST_FEATURES
         );
 
-    /*
-     * BlockOS currently needs the network MAC feature.
-     *
-     * We deliberately do NOT negotiate MRG_RXBUF here because
-     * the current RX implementation does not yet consume the
-     * virtio_net_hdr / mergeable-buffer semantics.
-     */
     const uint32_t wanted_features =
         VIRTIO_NET_F_MAC;
 
@@ -615,10 +591,6 @@ bool virtio_common::device_init(
 
     Print(msg);
 
-    // --------------------------------------------------------
-    // STEP 1: RESET
-    // --------------------------------------------------------
-
     Print(
         (CHAR16*)
         L"virtio_common: resetting device\n"
@@ -639,19 +611,11 @@ bool virtio_common::device_init(
         L"virtio_common: device reset OK\n"
     );
 
-    // --------------------------------------------------------
-    // ACKNOWLEDGE
-    // --------------------------------------------------------
-
     virtio_write8(
         h,
         REG_STATUS,
         STATUS_ACKNOWLEDGE
     );
-
-    // --------------------------------------------------------
-    // DRIVER
-    // --------------------------------------------------------
 
     virtio_write8(
         h,
@@ -686,10 +650,6 @@ bool virtio_common::device_init(
 
         return false;
     }
-
-    // --------------------------------------------------------
-    // FEATURE NEGOTIATION
-    // --------------------------------------------------------
 
     Print(
         (CHAR16*)
@@ -727,10 +687,6 @@ bool virtio_common::device_init(
         return false;
     }
 
-    // --------------------------------------------------------
-    // PAGE SIZE
-    // --------------------------------------------------------
-
     virtio_write32(
         h,
         REG_GUEST_PAGE_SIZE,
@@ -762,10 +718,6 @@ bool virtio_common::device_init(
 
         return false;
     }
-
-    // --------------------------------------------------------
-    // FEATURE STATUS
-    // --------------------------------------------------------
 
     status =
         virtio_read8(
@@ -816,10 +768,6 @@ bool virtio_common::device_init(
         return false;
     }
 
-    // --------------------------------------------------------
-    // DMA sanity test
-    // --------------------------------------------------------
-
     void* test_dma =
         dma::alloc(
             4096,
@@ -852,23 +800,6 @@ bool virtio_common::device_init(
     );
 
     Print(msg);
-
-    /*
-     * IMPORTANT:
-     *
-     * DRIVER_OK is NOT set here.
-     *
-     * The network driver still has to:
-     *
-     *   1. select TX queue
-     *   2. select RX queue
-     *   3. create/program virtqueues
-     *   4. allocate RX buffers
-     *   5. submit RX descriptors
-     *   6. configure device
-     *
-     * Only then should virtio-net set DRIVER_OK.
-     */
 
     Print(
         (CHAR16*)
