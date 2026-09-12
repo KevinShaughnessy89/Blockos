@@ -5,11 +5,13 @@
 extern "C" {
 #include <efi.h>
 }
+
 extern "C" {
 #include <efilib.h>
 }
 
 #include <stdint.h>
+#include <cstring>
 
 // ============================================================
 // VirtIO legacy PCI I/O helpers
