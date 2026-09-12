@@ -11,7 +11,28 @@ extern "C" {
 }
 
 #include <stdint.h>
-#include <cstring>
+
+// ============================================================
+// Minimal freestanding memset
+// ============================================================
+
+static void* blockos_memset(
+    void* ptr,
+    int value,
+    uint64_t size
+)
+{
+    uint8_t* dst =
+        static_cast<uint8_t*>(ptr);
+
+    const uint8_t byte =
+        static_cast<uint8_t>(value);
+
+    for (uint64_t i = 0; i < size; ++i)
+        dst[i] = byte;
+
+    return ptr;
+}
 
 // ============================================================
 // VirtIO legacy PCI I/O helpers
