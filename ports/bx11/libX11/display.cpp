@@ -7,6 +7,7 @@
 #include "../ipc/transport.hpp"
 #include "../server/server.hpp"
 #include "../server/protocol.hpp"
+#include "../render/framebuffer.hpp"
 
 struct _XDisplay {
     blockos::bx11::ipc::RingChannel channel;
@@ -43,7 +44,7 @@ extern "C" Window XRootWindow(Display*,int){return 1;}
 extern "C" unsigned long XBlackPixel(Display*,int){return 0;}
 extern "C" unsigned long XWhitePixel(Display*,int){return 0xFFFFFFFFu;}
 
-extern "C" int XFlush(Display *d){ if(!d||!d->server)return 0; d->server->render(); return 0; }
+extern "C" int XFlush(Display *d){ (void)d; return 0; }
 extern "C" int XSync(Display *d,Bool){return XFlush(d);}
 extern "C" int XFree(void *p){std::free(p);return 0;}
 
@@ -54,7 +55,12 @@ extern "C" Window XCreateSimpleWindow(Display *d,Window parent,int x,int y,unsig
 }
 extern "C" Window XCreateWindow(Display*d,Window parent,int x,int y,unsigned w,unsigned h,unsigned border,int depth,unsigned c_class,Visual* visual,unsigned long valuemask,void* attributes){(void)depth;(void)c_class;(void)visual;(void)valuemask;(void)attributes;return XCreateSimpleWindow(d,parent,x,y,w,h,border,0,0xFF202020u);}
 extern "C" int XDestroyWindow(Display*d,Window w){return d&&d->server&&d->server->destroy_window(w)?0:-1;}
-extern "C" int XMapWindow(Display*d,Window w){return d&&d->server&&d->server->map_window(w)?0:-1;}
+extern "C" int XMapWindow(Display*d,Window w){
+    if(!d || !d->server) return -1;
+    if(!d->server->map_window(w)) return -1;
+    d->server->render();
+    return 0;
+}
 extern "C" int XMapRaised(Display*d,Window w){return XMapWindow(d,w);}
 extern "C" int XUnmapWindow(Display*d,Window w){return d&&d->server&&d->server->unmap_window(w)?0:-1;}
 extern "C" int XMoveWindow(Display*d,Window w,int x,int y){auto *win=d&&d->server?d->server->find_window(w):nullptr;return win&&d->server->move_resize(w,x,y,win->width,win->height)?0:-1;}
@@ -94,9 +100,54 @@ extern "C" GC XCreateGC(Display*,Drawable,unsigned long,void*){return new _XGC{}
 extern "C" int XFreeGC(Display*,GC g){delete g;return 0;}
 extern "C" int XSetForeground(Display*,GC g,unsigned long c){if(g)g->foreground=c;return 0;}
 extern "C" int XSetBackground(Display*,GC g,unsigned long c){if(g)g->background=c;return 0;}
-extern "C" int XFillRectangle(Display*d,Drawable,GC g,int x,int y,unsigned w,unsigned h){(void)g;(void)d;(void)x;(void)y;(void)w;(void)h;return 0;}
-extern "C" int XDrawRectangle(Display*,Drawable,GC,int,int,unsigned,unsigned){return 0;}
-extern "C" int XDrawLine(Display*,Drawable,GC,int,int,int,int){return 0;}
-extern "C" int XCopyArea(Display*,Drawable,Drawable,GC,int,int,unsigned,unsigned,int,int){return 0;}
+extern "C" int XFillRectangle(Display*d,Drawable,GC g,int x,int y,unsigned w,unsigned h){
+    (void)d;
+    if(!g || !test_fb.pixels) return 0;
+    test_surface.rect(x,y,static_cast<int>(w),static_cast<int>(h),static_cast<uint32_t>(g->foreground));
+    return 0;
+}
 
-extern "C" void bx11_bind_framebuffer(uint32_t *pixels,uint32_t width,uint32_t height,uint32_t stride){test_fb={pixels,width,height,stride};}
+extern "C" int XDrawRectangle(Display*d,Drawable,GC g,int x,int y,unsigned w,unsigned h){
+    (void)d;
+    if(!g || !test_fb.pixels) return 0;
+    const uint32_t c=static_cast<uint32_t>(g->foreground);
+    const int iw=static_cast<int>(w);
+    const int ih=static_cast<int>(h);
+    if(iw<=0 || ih<=0) return 0;
+    test_surface.rect(x,y,iw,1,c);
+    if(ih>1) test_surface.rect(x,y+ih-1,iw,1,c);
+    if(ih>2) test_surface.rect(x,y+1,1,ih-2,c);
+    if(iw>1 && ih>2) test_surface.rect(x+iw-1,y+1,1,ih-2,c);
+    return 0;
+}
+
+extern "C" int XDrawLine(Display*d,Drawable,GC g,int x1,int y1,int x2,int y2){
+    (void)d;
+    if(!g || !test_fb.pixels) return 0;
+    const uint32_t c=static_cast<uint32_t>(g->foreground);
+    int dx=(x2>x1)?(x2-x1):(x1-x2);
+    int sx=(x1<x2)?1:-1;
+    int dy=(y2>y1)?-(y2-y1):-(y1-y2);
+    int sy=(y1<y2)?1:-1;
+    int err=dx+dy;
+    for(;;){
+        test_surface.pixel(x1,y1,c);
+        if(x1==x2 && y1==y2) break;
+        int e2=2*err;
+        if(e2>=dy){err+=dy; x1+=sx;}
+        if(e2<=dx){err+=dx; y1+=sy;}
+    }
+    return 0;
+}
+
+extern "C" int XCopyArea(Display*d,Drawable,Drawable,GC,int sx,int sy,unsigned w,unsigned h,int dx,int dy){
+    (void)d;
+    if(!test_fb.pixels) return 0;
+    test_surface.copy(sx,sy,static_cast<int>(w),static_cast<int>(h),dx,dy);
+    return 0;
+}
+
+extern "C" void bx11_bind_framebuffer(uint32_t *pixels,uint32_t width,uint32_t height,uint32_t stride){
+    test_fb={pixels,width,height,stride};
+    test_surface.bind(test_fb);
+}
