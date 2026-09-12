@@ -1,153 +1,189 @@
 #include <cstdlib>
 #include <cstring>
-#include <vector>
-#include <unordered_map>
-#include <string>
+
 #include "X11/Xlib.h"
-#include "../ipc/transport.hpp"
-#include "../server/server.hpp"
-#include "../server/protocol.hpp"
-#include "../render/framebuffer.hpp"
+#include "X11/Xrandr.h"
+#include "X11/extensions/Xinerama.h"
+#include "X11/extensions/Xrender.h"
+#include "X11/extensions/shape.h"
+#include "X11/extensions/Xfixes.h"
 
-struct _XDisplay {
-    blockos::bx11::ipc::RingChannel channel;
-    uint32_t client_id{0};
-    blockos::bx11::server::Server *server{nullptr};
-    std::unordered_map<Window,long> masks;
-    std::vector<XEvent> events;
-};
-struct _XGC { unsigned long foreground{0xFFFFFFFFu}; unsigned long background{0}; };
-struct _XVisual {};
-struct _XImage {};
+extern "C" {
 
-static blockos::bx11::render::Framebuffer test_fb{};
-static blockos::bx11::render::Surface test_surface{};
-static blockos::bx11::server::Server test_server{};
-static uint32_t next_window_for_client = 100;
+// ============================================================
+// XRandR
+// ============================================================
 
-/* Minimal X Resource Manager compatibility hook required by WindowMaker. */
-extern "C" void XrmInitialize() {}
-
-extern "C" Display *XOpenDisplay(const char *)
+Bool XRRQueryVersion(
+    Display* dpy,
+    int* major,
+    int* minor)
 {
-    if(!test_fb.pixels) return nullptr;
-    static bool initialized=false;
-    if(!initialized){ test_surface.bind(test_fb); test_server.init(&test_surface); initialized=true; }
-    auto *d=new Display{}; d->server=&test_server; d->client_id=test_server.connect(&d->channel); return d;
+    (void)dpy;
+
+    if (major)
+        *major = 1;
+
+    if (minor)
+        *minor = 6;
+
+    return True;
 }
 
-extern "C" int XCloseDisplay(Display *d){ if(!d)return 0; if(d->server)d->server->disconnect(d->client_id); delete d; return 0; }
-extern "C" const char *XDisplayName(const char *n){ return n?n:":0"; }
-extern "C" int XDefaultScreen(Display*){return 0;}
-extern "C" Window XDefaultRootWindow(Display*){return 1;}
-extern "C" Window XRootWindow(Display*,int){return 1;}
-extern "C" unsigned long XBlackPixel(Display*,int){return 0;}
-extern "C" unsigned long XWhitePixel(Display*,int){return 0xFFFFFFFFu;}
+void* XRRGetScreenInfo(
+    Display* dpy,
+    Window window)
+{
+    (void)dpy;
+    (void)window;
 
-extern "C" int XFlush(Display *d){ (void)d; return 0; }
-extern "C" int XSync(Display *d,Bool){return XFlush(d);}
-extern "C" int XFree(void *p){std::free(p);return 0;}
+    return nullptr;
+}
 
-extern "C" Window XCreateSimpleWindow(Display *d,Window parent,int x,int y,unsigned w,unsigned h,unsigned border,unsigned long borderc,unsigned long bg){
-    (void)borderc;
-    if(!d||!d->server) return 0;
-    return d->server->create_window(d->client_id,parent,x,y,w,h,border,bg);
+XRRScreenSize* XRRConfigSizes(
+    void* config,
+    int* n)
+{
+    (void)config;
+
+    if (n)
+        *n = 0;
+
+    return nullptr;
 }
-extern "C" Window XCreateWindow(Display*d,Window parent,int x,int y,unsigned w,unsigned h,unsigned border,int depth,unsigned c_class,Visual* visual,unsigned long valuemask,void* attributes){(void)depth;(void)c_class;(void)visual;(void)valuemask;(void)attributes;return XCreateSimpleWindow(d,parent,x,y,w,h,border,0,0xFF202020u);}
-extern "C" int XDestroyWindow(Display*d,Window w){return d&&d->server&&d->server->destroy_window(w)?0:-1;}
-extern "C" int XMapWindow(Display*d,Window w){
-    if(!d || !d->server) return -1;
-    if(!d->server->map_window(w)) return -1;
-    d->server->render();
-    return 0;
-}
-extern "C" int XMapRaised(Display*d,Window w){return XMapWindow(d,w);}
-extern "C" int XUnmapWindow(Display*d,Window w){return d&&d->server&&d->server->unmap_window(w)?0:-1;}
-extern "C" int XMoveWindow(Display*d,Window w,int x,int y){auto *win=d&&d->server?d->server->find_window(w):nullptr;return win&&d->server->move_resize(w,x,y,win->width,win->height)?0:-1;}
-extern "C" int XResizeWindow(Display*d,Window w,unsigned a,unsigned b){auto *win=d&&d->server?d->server->find_window(w):nullptr;return win&&d->server->move_resize(w,win->x,win->y,a,b)?0:-1;}
-extern "C" int XMoveResizeWindow(Display*d,Window w,int x,int y,unsigned a,unsigned b){return d&&d->server&&d->server->move_resize(w,x,y,a,b)?0:-1;}
-extern "C" int XRaiseWindow(Display*d,Window w){(void)d;(void)w;return 0;}
-extern "C" int XLowerWindow(Display*d,Window w){(void)d;(void)w;return 0;}
-extern "C" int XReparentWindow(Display*d,Window w,Window p,int x,int y){auto *win=d&&d->server?d->server->find_window(w):nullptr; if(!win||!d->server->find_window(p))return -1;win->parent=p;return d->server->move_resize(w,x,y,win->width,win->height)?0:-1;}
-extern "C" int XConfigureWindow(Display*d,Window w,unsigned m,XWindowChanges*c){if(!d||!c)return -1;auto *win=d->server->find_window(w);if(!win)return -1;int x=(m&CWX)?c->x:win->x;int y=(m&CWY)?c->y:win->y;unsigned ww=(m&CWWidth)?c->width:win->width;unsigned hh=(m&CWHeight)?c->height:win->height;return d->server->move_resize(w,x,y,ww,hh)?0:-1;}
-extern "C" int XGetWindowAttributes(Display*d,Window w,XWindowAttributes*a){if(!d||!a)return 0;auto *win=d->server->find_window(w);if(!win)return 0;std::memset(a,0,sizeof(*a));a->x=win->x;a->y=win->y;a->width=win->width;a->height=win->height;a->border_width=win->border_width;a->root=1;a->map_state=win->mapped?2:0;a->your_event_mask=win->event_mask;return 1;}
-extern "C" int XSelectInput(Display*d,Window w,long mask){if(!d||!d->server)return -1;d->masks[w]=mask;return d->server->select_input(w,static_cast<uint64_t>(mask))?0:-1;}
-extern "C" int XGetGeometry(Display*d,Drawable dr,Window*r,int*x,int*y,unsigned*w,unsigned*h,unsigned*border,unsigned*depth){(void)dr;if(!d||!d->server)return 0;auto *win=d->server->find_window(dr);if(!win)return 0;if(r)*r=1;if(x)*x=win->x;if(y)*y=win->y;if(w)*w=win->width;if(h)*h=win->height;if(border)*border=win->border_width;if(depth)*depth=32;return 1;}
-extern "C" int XNextEvent(Display*d,XEvent*e){if(!d||!e)return 0;if(d->events.empty())return 0;*e=d->events.front();d->events.erase(d->events.begin());return 0;}
-extern "C" int XPending(Display*d){return d?static_cast<int>(d->events.size()):0;}
-extern "C" int XEventsQueued(Display*d,int,XEvent*){return XPending(d);}
-extern "C" int XPutBackEvent(Display*d,XEvent*e){if(!d||!e)return 0;d->events.insert(d->events.begin(),*e);return 0;}
-extern "C" int XSendEvent(Display*d,Window,Bool,long,XEvent*){(void)d;return 1;}
-extern "C" Atom XInternAtom(Display*d,const char*n,Bool only){return d&&d->server?d->server->intern_atom(n?n:"",only)!=0?d->server->intern_atom(n?n:"",only):0:0;}
-extern "C" char *XGetAtomName(Display*d,Atom a){(void)d;(void)a;return nullptr;}
-extern "C" int XChangeProperty(Display*,Window,Atom,Atom,int,int,const unsigned char*,int){return 0;}
-extern "C" int XDeleteProperty(Display*,Window,Atom){return 0;}
-extern "C" int XGetWindowProperty(Display*,Window,Atom,long,long,Bool,Atom,Atom*,int*,unsigned long*,unsigned long*,unsigned char**){return 1;}
-extern "C" int XSetWMNormalHints(Display*,Window,XSizeHints*){return 1;}
-extern "C" void XSetWMHints(Display*,Window,XWMHints*){}
-extern "C" int XGetWMName(Display*,Window,void*){return 0;}
-extern "C" int XSetWMName(Display*,Window,void*){return 0;}
-extern "C" int XSetClassHint(Display*,Window,XClassHint*){return 1;}
-extern "C" int XDefineCursor(Display*,Window,Cursor){return 0;}
-extern "C" int XUndefineCursor(Display*,Window){return 0;}
-extern "C" int XGrabPointer(Display*,Window,Bool,unsigned int,int,int,Window,Cursor,Time){return 0;}
-extern "C" int XUngrabPointer(Display*,Time){return 0;}
-extern "C" int XGrabKeyboard(Display*,Window,Bool,int,int,Time){return 0;}
-extern "C" int XUngrabKeyboard(Display*,Time){return 0;}
-extern "C" Pixmap XCreatePixmap(Display*,Drawable,unsigned int,unsigned int,unsigned int){return next_window_for_client++;}
-extern "C" int XFreePixmap(Display*,Pixmap){return 0;}
-extern "C" GC XCreateGC(Display*,Drawable,unsigned long,void*){return new _XGC{};}
-extern "C" int XFreeGC(Display*,GC g){delete g;return 0;}
-extern "C" int XSetForeground(Display*,GC g,unsigned long c){if(g)g->foreground=c;return 0;}
-extern "C" int XSetBackground(Display*,GC g,unsigned long c){if(g)g->background=c;return 0;}
-extern "C" int XFillRectangle(Display*d,Drawable,GC g,int x,int y,unsigned w,unsigned h){
-    (void)d;
-    if(!g || !test_fb.pixels) return 0;
-    test_surface.rect(x,y,static_cast<int>(w),static_cast<int>(h),static_cast<uint32_t>(g->foreground));
+
+short XRRConfigCurrentConfiguration(
+    void* config,
+    int* rotation)
+{
+    (void)config;
+
+    if (rotation)
+        *rotation = 0;
+
     return 0;
 }
 
-extern "C" int XDrawRectangle(Display*d,Drawable,GC g,int x,int y,unsigned w,unsigned h){
-    (void)d;
-    if(!g || !test_fb.pixels) return 0;
-    const uint32_t c=static_cast<uint32_t>(g->foreground);
-    const int iw=static_cast<int>(w);
-    const int ih=static_cast<int>(h);
-    if(iw<=0 || ih<=0) return 0;
-    test_surface.rect(x,y,iw,1,c);
-    if(ih>1) test_surface.rect(x,y+ih-1,iw,1,c);
-    if(ih>2) test_surface.rect(x,y+1,1,ih-2,c);
-    if(iw>1 && ih>2) test_surface.rect(x+iw-1,y+1,1,ih-2,c);
+void XRRFreeScreenConfigInfo(
+    void* config)
+{
+    (void)config;
+}
+
+int XRRSelectInput(
+    Display* dpy,
+    Window window,
+    int mask)
+{
+    (void)dpy;
+    (void)window;
+    (void)mask;
+
     return 0;
 }
 
-extern "C" int XDrawLine(Display*d,Drawable,GC g,int x1,int y1,int x2,int y2){
-    (void)d;
-    if(!g || !test_fb.pixels) return 0;
-    const uint32_t c=static_cast<uint32_t>(g->foreground);
-    int dx=(x2>x1)?(x2-x1):(x1-x2);
-    int sx=(x1<x2)?1:-1;
-    int dy=(y2>y1)?-(y2-y1):-(y1-y2);
-    int sy=(y1<y2)?1:-1;
-    int err=dx+dy;
-    for(;;){
-        test_surface.pixel(x1,y1,c);
-        if(x1==x2 && y1==y2) break;
-        int e2=2*err;
-        if(e2>=dy){err+=dy; x1+=sx;}
-        if(e2<=dx){err+=dx; y1+=sy;}
+
+// ============================================================
+// Xinerama
+// ============================================================
+
+Bool XineramaQueryExtension(
+    Display* dpy,
+    int* event_base,
+    int* error_base)
+{
+    (void)dpy;
+
+    if (event_base)
+        *event_base = 0;
+
+    if (error_base)
+        *error_base = 0;
+
+    return True;
+}
+
+Bool XineramaIsActive(
+    Display* dpy,
+    Window window)
+{
+    (void)dpy;
+    (void)window;
+
+    /*
+     * BX11 currently exposes one virtual display.
+     *
+     * Xinerama is reported as active so legacy X11
+     * window managers can obtain the screen geometry.
+     */
+    return True;
+}
+
+XineramaScreenInfo* XineramaQueryScreens(
+    Display* dpy,
+    int* count)
+{
+    (void)dpy;
+
+    if (!count)
+        return nullptr;
+
+    *count = 1;
+
+    XineramaScreenInfo* info =
+        static_cast<XineramaScreenInfo*>(
+            std::calloc(1, sizeof(XineramaScreenInfo)));
+
+    if (!info)
+    {
+        *count = 0;
+        return nullptr;
     }
-    return 0;
+
+    info->screen_number = 0;
+
+    info->x_org = 0;
+    info->y_org = 0;
+
+    /*
+     * Current BX11 virtual framebuffer geometry.
+     */
+    info->width = 1024;
+    info->height = 768;
+
+    return info;
 }
 
-extern "C" int XCopyArea(Display*d,Drawable,Drawable,GC,int sx,int sy,unsigned w,unsigned h,int dx,int dy){
-    (void)d;
-    if(!test_fb.pixels) return 0;
-    test_surface.copy(sx,sy,static_cast<int>(w),static_cast<int>(h),dx,dy);
-    return 0;
+
+// ============================================================
+// XShape
+// ============================================================
+
+Bool XShapeQueryExtension(
+    Display* dpy,
+    int* event_base,
+    int* error_base)
+{
+    (void)dpy;
+
+    if (event_base)
+        *event_base = 0;
+
+    if (error_base)
+        *error_base = 0;
+
+    return True;
 }
 
-extern "C" void bx11_bind_framebuffer(uint32_t *pixels,uint32_t width,uint32_t height,uint32_t stride){
-    test_fb={pixels,width,height,stride};
-    test_surface.bind(test_fb);
-}
+int XShapeCombineMask(
+    Display* dpy,
+    Window dest,
+    int dest_kind,
+    int x_off,
+    int y_off,
+    Pixmap src,
+    int op)
+{
+    (void)dpy;
+    (void)dest;
+    (void)dest
