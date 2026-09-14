@@ -27,7 +27,7 @@ context_switch:
     # --------------------------------------------------------
     # Switch address space if CR3 != 0
     #
-    # RDX = new CR3
+    # RDX -> uint64_t new_cr3
     # --------------------------------------------------------
 
     movq %rdx, %rax

@@ -7,7 +7,6 @@
 #include "drivers/Keymap.hpp"
 #include "drivers/ata_devices.hpp"
 #include "events.hpp"
-#include "font8x8.h"
 #include "fs/fat32.hpp"
 #include "proc.hpp"
 #include "ps2keyboard.hpp"
@@ -15,7 +14,6 @@
 #include "shell.hpp"
 #include "sysmem.hpp"
 #include "vfs.hpp"
-#include "virtio_input.hpp"
 
 
 extern "C"
@@ -980,26 +978,7 @@ extern "C" EFI_STATUS EFIAPI efi_main(
 
     cpu_tables.init();
 
-    /*
-     * ========================================================
-     * Input
-     * ========================================================
-     *
-     * IMPORTANT:
-     *
-     * We intentionally do NOT instantiate VirtIO here.
-     *
-     * Your current virtio_input.hpp does not expose a type
-     * named:
-     *
-     *     VirtioInput
-     *
-     * or:
-     *
-     *     virtio_input
-     *
-     * Therefore the PS/2 devices are used for now.
-     */
+    // Input: PS/2 keyboard and mouse
 
     PS2Mouse mouse;
     PS2Keyboard keyboard;

@@ -12,11 +12,6 @@ namespace scheduler_preempt {
         void* arg
     );
 
-    int preempt_create_process_from_elf(
-        const void* elf_buf,
-        size_t elf_size
-    );
-
     void preempt_yield();
 
     void preempt_scheduler_tick();

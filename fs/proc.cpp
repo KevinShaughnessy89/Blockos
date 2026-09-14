@@ -282,34 +282,6 @@ static size_t read_version(
 
 /*
  * ============================================================
- *  /proc/uptime
- *
- *  Jelenleg nincs olyan timer API megadva ebben a modulban,
- *  ezért itt egy biztonságos placeholder érték szerepel.
- * ============================================================
- */
-
-static size_t read_uptime(
-    char* buffer,
-    size_t max_size)
-{
-    if (!buffer || max_size == 0)
-        return 0;
-
-    size_t pos = 0;
-
-    append_string(
-        buffer,
-        max_size,
-        pos,
-        "0.00 0.00\n");
-
-    return pos;
-}
-
-
-/*
- * ============================================================
  *  /proc/filesystems
  * ============================================================
  */
@@ -452,27 +424,31 @@ struct ProcFile
     size_t (*read)(
         char* buffer,
         size_t max_size);
+
+    const char* help;
 };
 
 static const ProcFile proc_files[] =
     {
         {"meminfo",
-         read_meminfo},
+         read_meminfo,
+         "Show physical memory and kernel heap counters."},
 
         {"version",
-         read_version},
-
-        {"uptime",
-         read_uptime},
+         read_version,
+         "Show the kernel version string."},
 
         {"filesystems",
-         read_filesystems},
+         read_filesystems,
+         "List the filesystem types the kernel knows."},
 
         {"cmdline",
-         read_cmdline},
+         read_cmdline,
+         "Show the boot command line."},
 
         {"self/status",
-         read_self_status}};
+         read_self_status,
+         "Show name, state, pid and arch of the current task."}};
 
 
 static constexpr size_t PROC_FILE_COUNT =
@@ -585,6 +561,22 @@ const char* name_at(
         return nullptr;
 
     return proc_files[index].name;
+}
+
+
+/*
+ * ============================================================
+ *  proc_help_at()
+ * ============================================================
+ */
+
+const char* help_at(
+    size_t index)
+{
+    if (index >= PROC_FILE_COUNT)
+        return nullptr;
+
+    return proc_files[index].help;
 }
 
 

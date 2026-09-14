@@ -72,6 +72,14 @@ void HardwareTablesManager::setup_tss()
     gdt[4] = {(uint16_t) (base_upper & 0xFFFF), (uint16_t) ((base_upper >> 16) & 0xFFFF), 0, 0, 0, 0};
 }
 
+struct TrapFrame
+{
+    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+    uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
+    uint64_t vector, error_code;
+    uint64_t rip, cs, rflags, rsp, ss; // CPU-pushed
+};
+
 struct InterruptFrame
 {
     uint64_t rax, rbx, rcx, rdx, rsi, rdi, rbp;
@@ -85,7 +93,8 @@ extern "C" void interrupt_handler_c(InterruptFrame* frame)
     if (frame->vector < 32)
     {
         printf("Interrupt: vector=%llu, error_code=%llu, rip=0x%llx\n", frame->vector, frame->error_code, frame->rip);
-        for (;;) __asm__ volatile("cli; hlt"); // Halt the CPU for now
+        for (;;)
+            __asm__ volatile("cli; hlt"); // Halt the CPU for now
     }
     else if (frame->vector < 48)
     {

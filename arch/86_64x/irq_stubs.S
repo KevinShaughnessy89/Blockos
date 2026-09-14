@@ -2,7 +2,7 @@
 .global isr_stub_\num
 
 isr_stub_\num:
-    push $0
+    push $0 // Push a dummy error-code
     push $\num
     jmp isr_common
 .endm

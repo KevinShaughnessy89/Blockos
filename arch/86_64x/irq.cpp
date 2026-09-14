@@ -8,9 +8,13 @@ extern "C"
 #include <efilib.h>
 }
 #include "drivers/io.hpp"
-#include "irq.hpp"
 
 using io::outb;
+
+namespace
+{
+volatile uint64_t timer_ticks = 0;
+} // namespace
 
 static void (*timer_handler_cb)(void) = 0;
 
@@ -39,7 +43,6 @@ void irq_register_timer_handler(void (*handler)(void))
 // PIT freq base
 static const uint32_t PIT_BASE = 1193182u;
 static uint16_t pit_divisor = 0;
-volatile uint64_t timer_ticks = 0;
 
 void pit_init(uint32_t frequency_hz)
 {
@@ -55,17 +58,22 @@ void pit_init(uint32_t frequency_hz)
     outb(0x40, (uint8_t) ((divisor >> 8) & 0xFF));
 }
 
-uint16_t timer_divisor()
+uint64_t timer::ticks()
+{
+    return timer_ticks;
+}
+
+uint16_t timer::divisor()
 {
     return pit_divisor;
 }
 
-uint32_t timer_frequency_millihz()
+uint32_t timer::frequency_millihz()
 {
     return (uint32_t) ((uint64_t) PIT_BASE * 1000u / pit_divisor);
 }
 
-uint64_t timer_uptime_ms()
+uint64_t timer::uptime_ms()
 {
     return (uint64_t) timer_ticks * pit_divisor * 1000u / PIT_BASE;
 }
