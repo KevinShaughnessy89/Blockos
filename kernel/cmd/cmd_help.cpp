@@ -42,6 +42,8 @@ extern "C" int help_main(const Args& args, Console& out)
     for (size_t i = 0; i < blockos::proc::count(); ++i)
     {
         out.print(blockos::proc::name_at(i));
+        out.print(" - ");
+        out.print(blockos::proc::help_at(i));
         out.newline();
     }
     return 0;

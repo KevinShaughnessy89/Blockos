@@ -16,8 +16,10 @@ void pit_handler_c();
 // Send End Of Interrupt to PIC
 void pic_send_eoi(uint8_t vector);
 
-extern volatile uint64_t timer_ticks;
-
-uint64_t timer_uptime_ms();
-uint16_t timer_divisor();
-uint32_t timer_frequency_millihz();
+namespace timer
+{
+uint64_t ticks();
+uint64_t uptime_ms();
+uint16_t divisor();
+uint32_t frequency_millihz();
+} // namespace timer

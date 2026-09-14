@@ -11,13 +11,13 @@ extern "C" int uptime_main(const Args& args, Console& out)
     (void) args;
     (void) out;
 
-    if (timer_divisor() == 0)
+    if (timer::divisor() == 0)
     {
         printf("uptime: timer not initialized\n");
         return 1;
     }
 
-    const uint64_t ms = timer_uptime_ms();
+    const uint64_t ms = timer::uptime_ms();
 
     const uint64_t milliseconds = ms % 1000u;
     const uint64_t total_seconds = ms / 1000u;
@@ -48,11 +48,11 @@ extern "C" int uptime_main(const Args& args, Console& out)
             milliseconds);
     }
 
-    const uint32_t millihz = timer_frequency_millihz();
+    const uint32_t millihz = timer::frequency_millihz();
 
     printf(
         "  %llu ticks at %lu.%03lu Hz\n",
-        (uint64_t) timer_ticks,
+        timer::ticks(),
         (unsigned long) (millihz / 1000u),
         (unsigned long) (millihz % 1000u));
 

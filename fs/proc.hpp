@@ -11,6 +11,7 @@ size_t read(const char* name, char* buffer, size_t max_size);
 bool exists(const char* name);
 size_t count();
 const char* name_at(size_t index);
+const char* help_at(size_t index);
 void init();
 bool test();
 

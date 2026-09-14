@@ -32,6 +32,7 @@ CXXFLAGS := \
 	-I$(EFI_INCL) \
 	-I$(EFI_INCL_X86) \
 	-ffreestanding \
+	-mno-red-zone \
 	-O2 \
 	-Wall \
 	-Wextra \
@@ -39,13 +40,10 @@ CXXFLAGS := \
 	-Ikernel \
 	-Idrivers \
 	-Ifs \
-	-Iexamples \
 	-Ilibc/include \
 	-fvisibility=hidden \
 	-MMD \
 	-MP
-
-
 
 # ============================================================
 # ASSEMBLY FLAGS
@@ -76,14 +74,12 @@ LDFLAGS := \
 
 SRC_DIRS := \
 	drivers \
-	examples \
 	fs \
 	kernel \
 	libc/src
 
 S_SRC_DIRS := \
 	drivers \
-	examples \
 	fs \
 	kernel
 
@@ -91,22 +87,8 @@ S_SRC_DIRS := \
 # SOURCE FILES
 # ============================================================
 
-# Sources excluded from the kernel build.
-#
-# Hosted C++ (libstdc++, libsodium) written against interfaces the kernel does
-# not provide; must be ported before they can compile -ffreestanding -nostdlib:
-#   fs/EROFS.cpp, fs/tmpfs.cpp, kernel/login.cpp
-#
-# Depends on blockos_terminal_write/_hex, which nothing defines yet. Currently
-# orphaned - nothing calls into it - so it is parked until there is a console
-# or serial backend to print through:
-#   kernel/panic.cpp
-EXCLUDED_SRC := \
-	fs/EROFS.cpp \
-	fs/tmpfs.cpp \
-	kernel/login.cpp \
-	kernel/panic.cpp
-	
+# No sources are currently excluded from the kernel build.
+EXCLUDED_SRC :=
 SRC := $(filter-out $(EXCLUDED_SRC), \
 	$(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp)))
 

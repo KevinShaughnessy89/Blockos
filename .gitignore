@@ -1,0 +1,105 @@
+# ============================================================
+# Build output
+# ============================================================
+
+# Object files are written next to their sources by the Makefile's
+# %.o: %.cpp / %.o: %.S rules, so they land all over the tree.
+*.o
+*.so
+*.efi
+*.EFI
+
+# Header dependency files written by the compiler's -MMD flag, one per
+# object, alongside the .o.
+*.d
+
+build/
+
+# ============================================================
+# Emulator / test artifacts
+# ============================================================
+
+disk.img
+*.img
+qemu.log
+*.log
+
+# ============================================================
+# Autotools generated output
+#
+# configure.ac and m4/ are the sources; everything below is produced by
+# autoreconf/configure and should be regenerated rather than committed.
+# If this project decides to ship a generated `configure` (some do), drop
+# that line.
+# ============================================================
+
+/configure
+/configure~
+/aclocal.m4
+/autom4te.cache/
+/config.guess
+/config.sub
+/config.status
+/config.log
+/config.h
+/stamp-h1
+/Makefile.in
+
+# ============================================================
+# Editor / local tooling
+#
+# These are personal or policy files rather than build output. They are
+# ignored so `git add .` cannot sweep them into a commit by accident.
+# If you intend to propose any of them upstream, remove its line here and
+# add the file deliberately.
+# ============================================================
+
+.vscode/
+.idea/
+.clang-format
+.gitattributes
+buildcheck.sh
+runtest.sh
+.claude/
+
+# ============================================================
+# Scratch
+# ============================================================
+
+*.orig
+*.rej
+*.bak
+PR-*.md
+
+# ============================================================
+# Local build config
+#
+# NOTE: the Makefile is already tracked, and .gitignore has no effect on files
+# in the index - this line only prevents a fresh clone from picking it up as
+# untracked. To keep local Makefile edits out of your commits, use:
+#     git update-index --skip-worktree Makefile
+# and to undo that:
+#     git update-index --no-skip-worktree Makefile
+# ============================================================
+
+
+# ============================================================
+# Vendored NVIDIA GPU tree
+#
+# INERT: all 3875 files under drivers/GPU/ are already tracked upstream
+# (144 MB), and .gitignore has no effect on files in the index. This line is
+# documentation only - it stops a fresh, untracked copy from being added, and
+# nothing more.
+#
+# The Makefile never builds them: SRC_DIRS uses a non-recursive wildcard, so
+# only the top level of drivers/ is compiled.
+#
+# Actually removing them would be `git rm -r --cached drivers/GPU`, which
+# stages 3875 deletions against the maintainer's tree and does not shrink the
+# repo (history keeps the blobs).
+# ============================================================
+
+drivers/GPU/
+
+merge-upstream.sh
+CLAUDE.md
