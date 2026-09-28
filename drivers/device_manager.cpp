@@ -1,3 +1,6 @@
+#include <efi.h>
+#include <efilib.h>
+
 #include "device_manager.hpp"
 #include "../fs/vfs.hpp"
 #include "gui.hpp"
@@ -704,9 +707,6 @@ void DeviceManager::show_device_status_report()
  * Kept in this existing driver manager so the normal kernel build needs no
  * additional HAL/source directory.
  * -------------------------------------------------------------------------- */
-extern "C" {
-#include <efilib.h>
-}
 #include "io.hpp"
 #include "../net/udp.hpp"
 
@@ -722,8 +722,6 @@ uint32_t g_watchdog_resets = 0;
 uint64_t g_last_heartbeat_ms = 0;
 constexpr uint64_t g_watchdog_timeout_ms = 10000;
 constexpr uint16_t SPACE_CMD_PORT = 4242;
-constexpr uint16_t SPACE_T_STATUS = 0xB701;
-uint16_t g_ground_port = 0;
 
 struct SpaceState {
     uint64_t generation;
@@ -834,8 +832,8 @@ struct RtcTime {
 
 static uint8_t cmos_read(uint8_t reg)
 {
-    outb(0x70, reg);
-    return inb(0x71);
+    io::outb(0x70, reg);
+    return io::inb(0x71);
 }
 
 static void rtc_read(uint16_t* y, uint8_t* mo, uint8_t* d,
@@ -904,8 +902,14 @@ static bool can_recv(uint32_t* id, uint8_t* data, uint8_t* len)
     volatile const uint32_t* r = reinterpret_cast<volatile const uint32_t*>(g_can.base);
     *id = r[0];
     *len = static_cast<uint8_t>(r[1] > 8 ? 8 : r[1]);
-    const uint32_t* p = reinterpret_cast<const uint32_t*>(r + 2);
-    for (unsigned i = 0; i < 2; ++i) reinterpret_cast<uint32_t*>(data)[i] = p[i];
+    for (unsigned i = 0; i < 2; ++i) {
+        const uint32_t word = r[2 + i];
+        const size_t off = static_cast<size_t>(i) * 4u;
+        if (off < *len) data[off] = static_cast<uint8_t>(word & 0xFFu);
+        if (off + 1u < *len) data[off + 1u] = static_cast<uint8_t>((word >> 8) & 0xFFu);
+        if (off + 2u < *len) data[off + 2u] = static_cast<uint8_t>((word >> 16) & 0xFFu);
+        if (off + 3u < *len) data[off + 3u] = static_cast<uint8_t>((word >> 24) & 0xFFu);
+    }
     return *len != 0;
 }
 
