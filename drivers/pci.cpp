@@ -23,31 +23,72 @@ static inline uint8_t inb(uint16_t port) {
     return value;
 }
 
-uint32_t pci_cfg_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t addr = 0x80000000U | ((uint32_t)bus << 16) | ((uint32_t)slot << 11) | ((uint32_t)func << 8) | (offset & 0xFC);
+static uint64_t g_ecam_base = 0;
+static uint8_t g_ecam_start_bus = 0;
+static uint8_t g_ecam_end_bus = 0;
+
+void pci_set_ecam(uint64_t base, uint8_t start_bus, uint8_t end_bus)
+{
+    g_ecam_base = base;
+    g_ecam_start_bus = start_bus;
+    g_ecam_end_bus = end_bus;
+}
+
+static inline bool ecam_active(uint8_t bus)
+{
+    return g_ecam_base != 0 &&
+           bus >= g_ecam_start_bus &&
+           bus <= g_ecam_end_bus;
+}
+
+static inline volatile uint8_t* ecam_ptr(
+    uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset)
+{
+    const uint64_t bus_off = uint64_t(bus - g_ecam_start_bus) << 20;
+    const uint64_t slot_off = uint64_t(slot) << 15;
+    const uint64_t func_off = uint64_t(func) << 12;
+    return reinterpret_cast<volatile uint8_t*>(
+        static_cast<uintptr_t>(g_ecam_base + bus_off + slot_off + func_off + offset));
+}
+
+uint32_t pci_cfg_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
+{
+    if (ecam_active(bus))
+        return *reinterpret_cast<volatile uint32_t*>(ecam_ptr(bus, slot, func, offset & 0xFC));
+    uint32_t addr = 0x80000000U | ((uint32_t)bus << 16) | ((uint32_t)slot << 11) |
+                    ((uint32_t)func << 8) | (offset & 0xFC);
     outl(addr, 0xCF8);
     return inl(0xCFC);
 }
 
-uint16_t pci_cfg_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+uint16_t pci_cfg_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
+{
     uint32_t v = pci_cfg_read32(bus, slot, func, offset & 0xFC);
-    int shift = (offset & 2) * 8;
+    const int shift = (offset & 2) * 8;
     return (uint16_t)((v >> shift) & 0xFFFF);
 }
 
-uint8_t pci_cfg_read8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+uint8_t pci_cfg_read8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
+{
     uint32_t v = pci_cfg_read32(bus, slot, func, offset & 0xFC);
-    int shift = (offset & 3) * 8;
+    const int shift = (offset & 3) * 8;
     return (uint8_t)((v >> shift) & 0xFF);
 }
 
-void pci_cfg_write32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
-    uint32_t addr = 0x80000000U | ((uint32_t)bus << 16) | ((uint32_t)slot << 11) | ((uint32_t)func << 8) | (offset & 0xFC);
+void pci_cfg_write32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value)
+{
+    if (ecam_active(bus)) {
+        *reinterpret_cast<volatile uint32_t*>(ecam_ptr(bus, slot, func, offset & 0xFC)) = value;
+        return;
+    }
+    uint32_t addr = 0x80000000U | ((uint32_t)bus << 16) | ((uint32_t)slot << 11) |
+                    ((uint32_t)func << 8) | (offset & 0xFC);
     outl(addr, 0xCF8);
     outl(value, 0xCFC);
 }
 
-void pci_cfg_write16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t value) {
+void pci_cfg_write16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t value)
+{
     uint32_t v = pci_cfg_read32(bus, slot, func, offset & 0xFC);
     int shift = (offset & 2) * 8;
     uint32_t mask = 0xFFFFu << shift;
@@ -55,7 +96,8 @@ void pci_cfg_write16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, ui
     pci_cfg_write32(bus, slot, func, offset & 0xFC, v);
 }
 
-void pci_cfg_write8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint8_t value) {
+void pci_cfg_write8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint8_t value)
+{
     uint32_t v = pci_cfg_read32(bus, slot, func, offset & 0xFC);
     int shift = (offset & 3) * 8;
     uint32_t mask = 0xFFu << shift;

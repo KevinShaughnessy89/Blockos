@@ -1,810 +1,652 @@
 #include "virtio_common.hpp"
 #include "pci.hpp"
 #include "dma.hpp"
+#include <string.h>
 
 extern "C" {
 #include <efi.h>
 }
-
 extern "C" {
 #include <efilib.h>
 }
 
-#include <stdint.h>
+namespace {
 
-// ============================================================
-// Minimal freestanding memset
-// ============================================================
+constexpr uint16_t VIRTIO_VENDOR_ID = 0x1AF4;
+constexpr uint16_t VIRTIO_NET_LEGACY = 0x1000;
+constexpr uint16_t VIRTIO_BLK_LEGACY = 0x1001;
+constexpr uint16_t VIRTIO_NET_MODERN = 0x1041;
+constexpr uint16_t VIRTIO_BLK_MODERN = 0x1042;
 
-static void* blockos_memset(
-    void* ptr,
-    int value,
-    uint64_t size
-)
+constexpr uint8_t STATUS_ACKNOWLEDGE = 0x01;
+constexpr uint8_t STATUS_DRIVER      = 0x02;
+constexpr uint8_t STATUS_DRIVER_OK   = 0x04;
+constexpr uint8_t STATUS_FEATURES_OK = 0x08;
+constexpr uint8_t STATUS_FAILED      = 0x80;
+
+constexpr uint64_t VIRTIO_F_VERSION_1 = 1ULL << 32;
+constexpr uint64_t VIRTIO_F_RING_EVENT_IDX = 1ULL << 29;
+constexpr uint64_t VIRTIO_NET_F_MAC = 1ULL << 5;
+constexpr uint64_t VIRTIO_BLK_F_FLUSH = 1ULL << 9;
+
+constexpr uint8_t PCI_CAP_ID_VENDOR = 0x09;
+constexpr uint8_t VIRTIO_PCI_CAP_COMMON_CFG = 1;
+constexpr uint8_t VIRTIO_PCI_CAP_NOTIFY_CFG = 2;
+constexpr uint8_t VIRTIO_PCI_CAP_ISR_CFG = 3;
+constexpr uint8_t VIRTIO_PCI_CAP_DEVICE_CFG = 4;
+
+constexpr uint16_t LEG_HOST_FEATURES = 0x00;
+constexpr uint16_t LEG_GUEST_FEATURES = 0x04;
+constexpr uint16_t LEG_GUEST_PAGE_SIZE = 0x08;
+constexpr uint16_t LEG_QUEUE_SELECT = 0x0C;
+constexpr uint16_t LEG_QUEUE_SIZE = 0x0E;
+constexpr uint16_t LEG_QUEUE_PFN = 0x10;
+constexpr uint16_t LEG_QUEUE_NOTIFY = 0x10;
+constexpr uint16_t LEG_STATUS = 0x12;
+constexpr uint16_t LEG_CONFIG = 0x14;
+
+constexpr uint16_t MOD_DEVICE_FEATURE_SELECT = 0x00;
+constexpr uint16_t MOD_DEVICE_FEATURE = 0x04;
+constexpr uint16_t MOD_DRIVER_FEATURE_SELECT = 0x08;
+constexpr uint16_t MOD_DRIVER_FEATURE = 0x0C;
+constexpr uint16_t MOD_DEVICE_STATUS = 0x14;
+constexpr uint16_t MOD_QUEUE_SELECT = 0x16;
+constexpr uint16_t MOD_QUEUE_SIZE = 0x18;
+constexpr uint16_t MOD_QUEUE_ENABLE = 0x1C;
+constexpr uint16_t MOD_QUEUE_NOTIFY_OFF = 0x1E;
+constexpr uint16_t MOD_QUEUE_DESC = 0x20;
+constexpr uint16_t MOD_QUEUE_DRIVER = 0x28;
+constexpr uint16_t MOD_QUEUE_DEVICE = 0x30;
+
+static inline void barrier()
 {
-    uint8_t* dst =
-        static_cast<uint8_t*>(ptr);
-
-    const uint8_t byte =
-        static_cast<uint8_t>(value);
-
-    for (uint64_t i = 0; i < size; ++i)
-        dst[i] = byte;
-
-    return ptr;
+    __asm__ volatile("mfence" ::: "memory");
 }
 
-// ============================================================
-// VirtIO legacy PCI I/O helpers
-// ============================================================
-
-static inline void outb_io(uint16_t port, uint8_t value)
+static inline uint8_t io_in8(uint16_t p)
 {
-    __asm__ volatile (
-        "outb %0, %1"
-        :
-        : "a"(value), "dN"(port)
-    );
+    uint8_t v;
+    __asm__ volatile("inb %1,%0" : "=a"(v) : "dN"(p));
+    return v;
 }
 
-static inline uint8_t inb_io(uint16_t port)
+static inline uint16_t io_in16(uint16_t p)
 {
-    uint8_t value;
-
-    __asm__ volatile (
-        "inb %1, %0"
-        : "=a"(value)
-        : "dN"(port)
-    );
-
-    return value;
+    uint16_t v;
+    __asm__ volatile("inw %1,%0" : "=a"(v) : "dN"(p));
+    return v;
 }
 
-static inline void outw_io(uint16_t port, uint16_t value)
+static inline uint32_t io_in32(uint16_t p)
 {
-    __asm__ volatile (
-        "outw %0, %1"
-        :
-        : "a"(value), "dN"(port)
-    );
+    uint32_t v;
+    __asm__ volatile("inl %1,%0" : "=a"(v) : "dN"(p));
+    return v;
 }
 
-static inline uint16_t inw_io(uint16_t port)
+static inline void io_out8(uint16_t p, uint8_t v)
 {
-    uint16_t value;
-
-    __asm__ volatile (
-        "inw %1, %0"
-        : "=a"(value)
-        : "dN"(port)
-    );
-
-    return value;
+    __asm__ volatile("outb %0,%1" : : "a"(v), "dN"(p));
 }
 
-static inline void outl_io(uint16_t port, uint32_t value)
+static inline void io_out16(uint16_t p, uint16_t v)
 {
-    __asm__ volatile (
-        "outl %0, %1"
-        :
-        : "a"(value), "dN"(port)
-    );
+    __asm__ volatile("outw %0,%1" : : "a"(v), "dN"(p));
 }
 
-static inline uint32_t inl_io(uint16_t port)
+static inline void io_out32(uint16_t p, uint32_t v)
 {
-    uint32_t value;
-
-    __asm__ volatile (
-        "inl %1, %0"
-        : "=a"(value)
-        : "dN"(port)
-    );
-
-    return value;
+    __asm__ volatile("outl %0,%1" : : "a"(v), "dN"(p));
 }
 
-// ============================================================
-// MMIO helpers
-// ============================================================
-
-static uint8_t read_reg8_mmio(
-    uint64_t base,
-    uint32_t offset
-)
+static inline uint32_t mmio32(uint64_t a, uint32_t off)
 {
-    volatile uint8_t* p =
-        (volatile uint8_t*)(UINTN)(base + offset);
-
-    return *p;
+    return *reinterpret_cast<volatile uint32_t*>(static_cast<UINTN>(a + off));
 }
 
-static void write_reg8_mmio(
-    uint64_t base,
-    uint32_t offset,
-    uint8_t value
-)
+static inline uint16_t mmio16(uint64_t a, uint32_t off)
 {
-    volatile uint8_t* p =
-        (volatile uint8_t*)(UINTN)(base + offset);
-
-    *p = value;
+    return *reinterpret_cast<volatile uint16_t*>(static_cast<UINTN>(a + off));
 }
 
-static uint16_t read_reg16_mmio(
-    uint64_t base,
-    uint32_t offset
-)
+static inline uint8_t mmio8(uint64_t a, uint32_t off)
 {
-    volatile uint16_t* p =
-        (volatile uint16_t*)(UINTN)(base + offset);
-
-    return *p;
+    return *reinterpret_cast<volatile uint8_t*>(static_cast<UINTN>(a + off));
 }
 
-static void write_reg16_mmio(
-    uint64_t base,
-    uint32_t offset,
-    uint16_t value
-)
+static inline void mmio32w(uint64_t a, uint32_t off, uint32_t v)
 {
-    volatile uint16_t* p =
-        (volatile uint16_t*)(UINTN)(base + offset);
-
-    *p = value;
+    *reinterpret_cast<volatile uint32_t*>(static_cast<UINTN>(a + off)) = v;
 }
 
-static uint32_t read_reg32_mmio(
-    uint64_t base,
-    uint32_t offset
-)
+static inline void mmio16w(uint64_t a, uint32_t off, uint16_t v)
 {
-    volatile uint32_t* p =
-        (volatile uint32_t*)(UINTN)(base + offset);
-
-    return *p;
+    *reinterpret_cast<volatile uint16_t*>(static_cast<UINTN>(a + off)) = v;
 }
 
-static void write_reg32_mmio(
-    uint64_t base,
-    uint32_t offset,
-    uint32_t value
-)
+static inline void mmio8w(uint64_t a, uint32_t off, uint8_t v)
 {
-    volatile uint32_t* p =
-        (volatile uint32_t*)(UINTN)(base + offset);
-
-    *p = value;
+    *reinterpret_cast<volatile uint8_t*>(static_cast<UINTN>(a + off)) = v;
 }
 
-// ============================================================
-// Generic register access
-// ============================================================
-
-static uint8_t virtio_read8(
-    const virtio_common::DeviceHandle* h,
-    uint32_t offset
-)
+static inline uint32_t pci_bar_raw(uint8_t bus, uint8_t slot, uint8_t fn, int index)
 {
-    if (!h)
-        return 0;
-
-    if (h->mmio)
-        return read_reg8_mmio(h->bar0, offset);
-
-    return inb_io(
-        (uint16_t)(h->bar0 + offset)
-    );
+    return pci_cfg_read32(bus, slot, fn, static_cast<uint8_t>(0x10 + index * 4));
 }
 
-static void virtio_write8(
-    const virtio_common::DeviceHandle* h,
-    uint32_t offset,
-    uint8_t value
-)
+static inline bool pci_bar_is_io(uint8_t bus, uint8_t slot, uint8_t fn, int index)
 {
-    if (!h)
-        return;
-
-    if (h->mmio)
-    {
-        write_reg8_mmio(
-            h->bar0,
-            offset,
-            value
-        );
-
-        return;
-    }
-
-    outb_io(
-        (uint16_t)(h->bar0 + offset),
-        value
-    );
+    return (pci_bar_raw(bus, slot, fn, index) & 1u) != 0;
 }
 
-static uint16_t virtio_read16(
-    const virtio_common::DeviceHandle* h,
-    uint32_t offset
-)
+static uint64_t pci_bar_base(uint8_t bus, uint8_t slot, uint8_t fn, int index)
 {
-    if (!h)
-        return 0;
-
-    if (h->mmio)
-        return read_reg16_mmio(h->bar0, offset);
-
-    return inw_io(
-        (uint16_t)(h->bar0 + offset)
-    );
+    return pci_read_bar(bus, slot, fn, index);
 }
 
-static void virtio_write16(
-    const virtio_common::DeviceHandle* h,
-    uint32_t offset,
-    uint16_t value
-)
+static void enable_pci_bus_master(uint8_t bus, uint8_t slot, uint8_t fn)
 {
-    if (!h)
-        return;
-
-    if (h->mmio)
-    {
-        write_reg16_mmio(
-            h->bar0,
-            offset,
-            value
-        );
-
-        return;
-    }
-
-    outw_io(
-        (uint16_t)(h->bar0 + offset),
-        value
-    );
+    uint16_t cmd = pci_cfg_read16(bus, slot, fn, 0x04);
+    cmd |= 0x0004; // Bus master
+    cmd |= 0x0002; // Memory space
+    pci_cfg_write16(bus, slot, fn, 0x04, cmd);
 }
 
-static uint32_t virtio_read32(
-    const virtio_common::DeviceHandle* h,
-    uint32_t offset
-)
+static uint8_t read_transport8(const virtio_common::DeviceHandle* h, uint32_t off)
 {
-    if (!h)
-        return 0;
-
-    if (h->mmio)
-        return read_reg32_mmio(
-            h->bar0,
-            offset
-        );
-
-    return inl_io(
-        (uint16_t)(h->bar0 + offset)
-    );
+    if (h->transport == virtio_common::Transport::PCI_IO)
+        return io_in8(static_cast<uint16_t>(h->bar0 + off));
+    return mmio8(h->bar0, off);
 }
 
-static void virtio_write32(
-    const virtio_common::DeviceHandle* h,
-    uint32_t offset,
-    uint32_t value
-)
+static uint16_t read_transport16(const virtio_common::DeviceHandle* h, uint32_t off)
 {
-    if (!h)
-        return;
-
-    if (h->mmio)
-    {
-        write_reg32_mmio(
-            h->bar0,
-            offset,
-            value
-        );
-
-        return;
-    }
-
-    outl_io(
-        (uint16_t)(h->bar0 + offset),
-        value
-    );
+    if (h->transport == virtio_common::Transport::PCI_IO)
+        return io_in16(static_cast<uint16_t>(h->bar0 + off));
+    return mmio16(h->bar0, off);
 }
 
-// ============================================================
-// Legacy VirtIO PCI registers
-// ============================================================
-
-namespace
+static uint32_t read_transport32(const virtio_common::DeviceHandle* h, uint32_t off)
 {
-    constexpr uint32_t REG_HOST_FEATURES   = 0x00;
-    constexpr uint32_t REG_GUEST_FEATURES  = 0x04;
-    constexpr uint32_t REG_GUEST_PAGE_SIZE = 0x08;
-    constexpr uint32_t REG_QUEUE_SELECT    = 0x0C;
-    constexpr uint32_t REG_QUEUE_SIZE      = 0x0E;
-    constexpr uint32_t REG_QUEUE_PFN       = 0x10;
-    constexpr uint32_t REG_STATUS          = 0x12;
-    constexpr uint32_t REG_ISR             = 0x13;
-    constexpr uint32_t REG_DEVICE_CONFIG   = 0x14;
-
-    constexpr uint8_t STATUS_ACKNOWLEDGE = 0x01;
-    constexpr uint8_t STATUS_DRIVER      = 0x02;
-    constexpr uint8_t STATUS_DRIVER_OK   = 0x04;
-    constexpr uint8_t STATUS_FEATURES_OK = 0x08;
-    constexpr uint8_t STATUS_FAILED      = 0x80;
-
-    constexpr uint32_t VIRTIO_NET_F_MAC =
-        (1u << 5);
-
-    constexpr uint16_t VIRTIO_VENDOR_ID =
-        0x1AF4;
-
-    constexpr uint16_t VIRTIO_NET_LEGACY_DEVICE_ID =
-        0x1000;
-
-    constexpr uint16_t VIRTIO_NET_MODERN_DEVICE_ID =
-        0x1041;
+    if (h->transport == virtio_common::Transport::PCI_IO)
+        return io_in32(static_cast<uint16_t>(h->bar0 + off));
+    return mmio32(h->bar0, off);
 }
 
-// ============================================================
-// VirtIO device discovery
-// ============================================================
+static void write_transport8(const virtio_common::DeviceHandle* h, uint32_t off, uint8_t v)
+{
+    if (h->transport == virtio_common::Transport::PCI_IO)
+        io_out8(static_cast<uint16_t>(h->bar0 + off), v);
+    else
+        mmio8w(h->bar0, off, v);
+}
 
-bool virtio_common::probe_device(
-    virtio_common::DeviceType type,
-    virtio_common::DeviceHandle* h
-)
+static void write_transport16(const virtio_common::DeviceHandle* h, uint32_t off, uint16_t v)
+{
+    if (h->transport == virtio_common::Transport::PCI_IO)
+        io_out16(static_cast<uint16_t>(h->bar0 + off), v);
+    else
+        mmio16w(h->bar0, off, v);
+}
+
+static void write_transport32(const virtio_common::DeviceHandle* h, uint32_t off, uint32_t v)
+{
+    if (h->transport == virtio_common::Transport::PCI_IO)
+        io_out32(static_cast<uint16_t>(h->bar0 + off), v);
+    else
+        mmio32w(h->bar0, off, v);
+}
+
+static uint16_t common_read16(const virtio_common::DeviceHandle* h, uint32_t off)
+{
+    return mmio16(h->common_cfg, off);
+}
+
+static uint32_t common_read32(const virtio_common::DeviceHandle* h, uint32_t off)
+{
+    return mmio32(h->common_cfg, off);
+}
+
+static uint64_t common_read64(const virtio_common::DeviceHandle* h, uint32_t off)
+{
+    const uint32_t lo = mmio32(h->common_cfg, off);
+    const uint32_t hi = mmio32(h->common_cfg, off + 4);
+    return (static_cast<uint64_t>(hi) << 32) | lo;
+}
+
+static void common_write16(const virtio_common::DeviceHandle* h, uint32_t off, uint16_t v)
+{
+    mmio16w(h->common_cfg, off, v);
+}
+
+static void common_write32(const virtio_common::DeviceHandle* h, uint32_t off, uint32_t v)
+{
+    mmio32w(h->common_cfg, off, v);
+}
+
+static void common_write64(const virtio_common::DeviceHandle* h, uint32_t off, uint64_t v)
+{
+    mmio32w(h->common_cfg, off, static_cast<uint32_t>(v));
+    mmio32w(h->common_cfg, off + 4, static_cast<uint32_t>(v >> 32));
+}
+
+static bool discover_capabilities(virtio_common::DeviceHandle* h)
 {
     if (!h)
         return false;
 
-    blockos_memset(
-        h,
-        0,
-        sizeof(*h)
-    );
+    const uint8_t status = static_cast<uint8_t>(pci_cfg_read16(h->bus, h->slot, h->func, 0x06) >> 8);
+    if ((status & 0x10) == 0)
+        return false;
 
-    uint16_t wanted_device = 0;
+    uint8_t cap = pci_cfg_read8(h->bus, h->slot, h->func, 0x34);
+    uint32_t notify_mult = 0;
 
-    switch (type)
-    {
-        case DeviceType::NETWORK:
-            wanted_device =
-                VIRTIO_NET_LEGACY_DEVICE_ID;
-            break;
+    for (unsigned guard = 0; cap != 0 && guard < 64; ++guard) {
+        if (cap < 0x40 || (cap & 3) != 0) {
+            // PCI capability pointers are DWORD aligned and live in config space.
+            cap = pci_cfg_read8(h->bus, h->slot, h->func, cap + 1);
+            continue;
+        }
 
+        const uint8_t cap_id = pci_cfg_read8(h->bus, h->slot, h->func, cap + 0);
+        const uint8_t next = pci_cfg_read8(h->bus, h->slot, h->func, cap + 1);
+
+        if (cap_id == PCI_CAP_ID_VENDOR) {
+            const uint8_t cfg_type = pci_cfg_read8(h->bus, h->slot, h->func, cap + 3);
+            const uint8_t bar = pci_cfg_read8(h->bus, h->slot, h->func, cap + 4);
+            const uint32_t offset = pci_cfg_read32(h->bus, h->slot, h->func, cap + 8);
+            const uint32_t length = pci_cfg_read32(h->bus, h->slot, h->func, cap + 12);
+            (void)length;
+
+            if (bar < 6 && !pci_bar_is_io(h->bus, h->slot, h->func, bar)) {
+                const uint64_t base = pci_bar_base(h->bus, h->slot, h->func, bar);
+                if (base != 0) {
+                    switch (cfg_type) {
+                        case VIRTIO_PCI_CAP_COMMON_CFG:
+                            h->common_cfg = base + offset;
+                            break;
+                        case VIRTIO_PCI_CAP_NOTIFY_CFG:
+                            h->notify_cfg = base + offset;
+                            notify_mult = pci_cfg_read32(h->bus, h->slot, h->func, cap + 16);
+                            break;
+                        case VIRTIO_PCI_CAP_ISR_CFG:
+                            h->isr_cfg = base + offset;
+                            break;
+                        case VIRTIO_PCI_CAP_DEVICE_CFG:
+                            h->device_cfg = base + offset;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+        }
+
+        cap = next;
+    }
+
+    h->notify_off_multiplier = notify_mult;
+
+    return h->common_cfg != 0 && h->notify_cfg != 0 && h->device_cfg != 0;
+}
+
+static bool find_device_ids(virtio_common::DeviceType type, uint16_t& legacy_id, uint16_t& modern_id)
+{
+    switch (type) {
+        case virtio_common::DeviceType::NETWORK:
+            legacy_id = VIRTIO_NET_LEGACY;
+            modern_id = VIRTIO_NET_MODERN;
+            return true;
+        case virtio_common::DeviceType::BLOCK:
+            legacy_id = VIRTIO_BLK_LEGACY;
+            modern_id = VIRTIO_BLK_MODERN;
+            return true;
         default:
             return false;
     }
+}
 
-    for (uint32_t bus = 0; bus < 256; ++bus)
-    {
-        for (uint32_t slot = 0; slot < 32; ++slot)
-        {
-            for (uint32_t func = 0; func < 8; ++func)
-            {
-                if (!pci_device_exists(
-                        (uint8_t)bus,
-                        (uint8_t)slot,
-                        (uint8_t)func))
-                {
-                    continue;
-                }
+} // namespace
 
-                const uint16_t vendor =
-                    pci_cfg_read16(
-                        (uint8_t)bus,
-                        (uint8_t)slot,
-                        (uint8_t)func,
-                        0x00
-                    );
+namespace virtio_common {
 
-                const uint16_t device =
-                    pci_cfg_read16(
-                        (uint8_t)bus,
-                        (uint8_t)slot,
-                        (uint8_t)func,
-                        0x02
-                    );
+bool probe_device(DeviceType type, DeviceHandle* h)
+{
+    if (!h)
+        return false;
+    *h = DeviceHandle{};
 
-                if (vendor != VIRTIO_VENDOR_ID)
-                    continue;
+    uint16_t legacy_id = 0;
+    uint16_t modern_id = 0;
+    if (!find_device_ids(type, legacy_id, modern_id))
+        return false;
 
-                if (device != wanted_device)
+    for (uint32_t bus = 0; bus < 256; ++bus) {
+        for (uint32_t slot = 0; slot < 32; ++slot) {
+            uint16_t vendor0 = pci_cfg_read16(static_cast<uint8_t>(bus), static_cast<uint8_t>(slot), 0, 0x00);
+            if (vendor0 == 0xFFFF)
+                continue;
+            uint8_t header = pci_cfg_read8(static_cast<uint8_t>(bus), static_cast<uint8_t>(slot), 0, 0x0E);
+            uint8_t funcs = (header & 0x80) ? 8 : 1;
+            for (uint32_t func = 0; func < funcs; ++func) {
+                const uint8_t b = static_cast<uint8_t>(bus);
+                const uint8_t s = static_cast<uint8_t>(slot);
+                const uint8_t f = static_cast<uint8_t>(func);
+                const uint16_t vendor = pci_cfg_read16(b, s, f, 0x00);
+                const uint16_t device = pci_cfg_read16(b, s, f, 0x02);
+                if (vendor != VIRTIO_VENDOR_ID || (device != legacy_id && device != modern_id))
                     continue;
 
-                const uint64_t bar =
-                    pci_read_bar(
-                        (uint8_t)bus,
-                        (uint8_t)slot,
-                        (uint8_t)func,
-                        0
-                    );
-
-                if (bar == 0)
-                    continue;
+                enable_pci_bus_master(b, s, f);
 
                 h->device_id = device;
-                h->bus = (uint8_t)bus;
-                h->slot = (uint8_t)slot;
-                h->func = (uint8_t)func;
-                h->bar0 = bar;
-                h->mmio = false;
+                h->bus = b;
+                h->slot = s;
+                h->func = f;
                 h->vendor_id = vendor;
+                h->irq = pci_cfg_read8(b, s, f, 0x3C);
 
-                h->irq =
-                    pci_cfg_read8(
-                        (uint8_t)bus,
-                        (uint8_t)slot,
-                        (uint8_t)func,
-                        0x3C
-                    );
+                if (device == modern_id) {
+                    h->modern = discover_capabilities(h);
+                    if (h->modern) {
+                        h->transport = Transport::PCI_MODERN;
+                        h->mmio = true;
+                        h->bar0 = h->common_cfg;
+                        return true;
+                    }
+                }
 
-                CHAR16 msg[256];
-
-                UnicodeSPrint(
-                    msg,
-                    sizeof(msg),
-                    (CHAR16*)
-                    L"virtio_common: VirtIO network found "
-                    L"at %u:%u.%u BAR0=0x%lx\n",
-                    bus,
-                    slot,
-                    func,
-                    bar
-                );
-
-                Print(msg);
-
-                return true;
+                // Transitional/legacy transport: prefer an I/O BAR if present,
+                // otherwise use a memory BAR as a legacy MMIO mapping.
+                for (int bar = 0; bar < 6; ++bar) {
+                    const uint64_t base = pci_bar_base(b, s, f, bar);
+                    if (!base)
+                        continue;
+                    if (pci_bar_is_io(b, s, f, bar)) {
+                        h->bar0 = base;
+                        h->transport = Transport::PCI_IO;
+                        h->mmio = false;
+                    } else {
+                        h->bar0 = base;
+                        h->transport = Transport::PCI_MMIO;
+                        h->mmio = true;
+                    }
+                    h->modern = false;
+                    return true;
+                }
             }
         }
     }
 
-    Print(
-        (CHAR16*)
-        L"virtio_common: VirtIO network device not found\n"
-    );
-
     return false;
 }
 
-// ============================================================
-// Reset device
-// ============================================================
-
-static bool virtio_reset(
-    virtio_common::DeviceHandle* h
-)
+void set_device_status(DeviceHandle* h, uint8_t status)
 {
     if (!h)
-        return false;
-
-    virtio_write8(
-        h,
-        REG_STATUS,
-        0
-    );
-
-    for (volatile uint32_t i = 0;
-         i < 10000;
-         ++i)
-    {
-        if (virtio_read8(
-                h,
-                REG_STATUS) == 0)
-        {
-            return true;
-        }
+        return;
+    if (h->modern) {
+        mmio8w(h->common_cfg, MOD_DEVICE_STATUS, status);
+        return;
     }
-
-    return virtio_read8(
-        h,
-        REG_STATUS
-    ) == 0;
+    write_transport8(h, LEG_STATUS, status);
 }
 
-// ============================================================
-// Feature negotiation
-// ============================================================
-
-static bool negotiate_legacy_network_features(
-    virtio_common::DeviceHandle* h
-)
+uint8_t get_device_status(DeviceHandle* h)
 {
     if (!h)
-        return false;
+        return 0;
+    if (h->modern)
+        return mmio8(h->common_cfg, MOD_DEVICE_STATUS);
+    return read_transport8(h, LEG_STATUS);
+}
 
-    const uint32_t host_features =
-        virtio_read32(
-            h,
-            REG_HOST_FEATURES
-        );
+static uint64_t read_legacy_features(DeviceHandle* h)
+{
+    return read_transport32(h, LEG_HOST_FEATURES);
+}
 
-    const uint32_t wanted_features =
-        VIRTIO_NET_F_MAC;
+static uint64_t read_modern_features(DeviceHandle* h)
+{
+    common_write32(h, MOD_DEVICE_FEATURE_SELECT, 0);
+    const uint32_t lo = common_read32(h, MOD_DEVICE_FEATURE);
+    common_write32(h, MOD_DEVICE_FEATURE_SELECT, 1);
+    const uint32_t hi = common_read32(h, MOD_DEVICE_FEATURE);
+    return (static_cast<uint64_t>(hi) << 32) | lo;
+}
 
-    const uint32_t agreed_features =
-        host_features &
-        wanted_features;
-
-    if ((agreed_features &
-         VIRTIO_NET_F_MAC) == 0)
-    {
-        Print(
-            (CHAR16*)
-            L"virtio_common: VirtIO-net MAC feature unavailable\n"
-        );
-
-        return false;
-    }
-
-    virtio_write32(
-        h,
-        REG_GUEST_FEATURES,
-        agreed_features
-    );
-
-    CHAR16 msg[256];
-
-    UnicodeSPrint(
-        msg,
-        sizeof(msg),
-        (CHAR16*)
-        L"virtio_common: host_features=0x%08x\n"
-        L"virtio_common: wanted_features=0x%08x\n"
-        L"virtio_common: agreed_features=0x%08x\n",
-        host_features,
-        wanted_features,
-        agreed_features
-    );
-
-    Print(msg);
-
+static bool write_modern_features(DeviceHandle* h, uint64_t features)
+{
+    common_write32(h, MOD_DRIVER_FEATURE_SELECT, 0);
+    common_write32(h, MOD_DRIVER_FEATURE, static_cast<uint32_t>(features));
+    common_write32(h, MOD_DRIVER_FEATURE_SELECT, 1);
+    common_write32(h, MOD_DRIVER_FEATURE, static_cast<uint32_t>(features >> 32));
+    barrier();
     return true;
 }
 
-// ============================================================
-// Legacy VirtIO device initialization
-// ============================================================
+bool negotiate_modern_features(DeviceHandle* h, uint64_t want_mask_low)
+{
+    if (!h || !h->modern)
+        return false;
 
-bool virtio_common::device_init(
-    virtio_common::DeviceHandle* h
-)
+    h->host_features = read_modern_features(h);
+    const uint64_t agreed = h->host_features & want_mask_low;
+    if (!(agreed & VIRTIO_F_VERSION_1))
+        return false;
+
+    if (!write_modern_features(h, agreed))
+        return false;
+
+    h->negotiated_features = agreed;
+    return true;
+}
+
+bool negotiate_features(void* bar0, bool mmio, uint32_t want_mask)
+{
+    if (!bar0)
+        return false;
+    DeviceHandle tmp{};
+    tmp.bar0 = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(bar0));
+    tmp.transport = mmio ? Transport::PCI_MMIO : Transport::PCI_IO;
+    tmp.mmio = mmio;
+    const uint32_t host = static_cast<uint32_t>(read_legacy_features(&tmp));
+    const uint32_t agreed = host & want_mask;
+    write_transport32(&tmp, LEG_GUEST_FEATURES, agreed);
+    return true;
+}
+
+uint32_t read_host_features(void* bar0, bool mmio)
+{
+    if (!bar0)
+        return 0;
+    DeviceHandle tmp{};
+    tmp.bar0 = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(bar0));
+    tmp.transport = mmio ? Transport::PCI_MMIO : Transport::PCI_IO;
+    tmp.mmio = mmio;
+    return static_cast<uint32_t>(read_legacy_features(&tmp));
+}
+
+bool device_init(DeviceHandle* h, uint64_t wanted_features)
 {
     if (!h)
         return false;
 
-    CHAR16 msg[256];
+    set_device_status(h, 0);
+    set_device_status(h, STATUS_ACKNOWLEDGE);
+    set_device_status(h, STATUS_ACKNOWLEDGE | STATUS_DRIVER);
 
-    UnicodeSPrint(
-        msg,
-        sizeof(msg),
-        (CHAR16*)
-        L"virtio_common: initializing "
-        L"device=0x%04x at %u:%u.%u BAR0=0x%lx\n",
-        h->device_id,
-        h->bus,
-        h->slot,
-        h->func,
-        h->bar0
-    );
-
-    Print(msg);
-
-    Print(
-        (CHAR16*)
-        L"virtio_common: resetting device\n"
-    );
-
-    if (!virtio_reset(h))
-    {
-        Print(
-            (CHAR16*)
-            L"virtio_common: device reset failed\n"
-        );
-
-        return false;
-    }
-
-    Print(
-        (CHAR16*)
-        L"virtio_common: device reset OK\n"
-    );
-
-    virtio_write8(
-        h,
-        REG_STATUS,
-        STATUS_ACKNOWLEDGE
-    );
-
-    virtio_write8(
-        h,
-        REG_STATUS,
-        STATUS_ACKNOWLEDGE |
-        STATUS_DRIVER
-    );
-
-    uint8_t status =
-        virtio_read8(
-            h,
-            REG_STATUS
-        );
-
-    UnicodeSPrint(
-        msg,
-        sizeof(msg),
-        (CHAR16*)
-        L"virtio_common: status after DRIVER=0x%02x\n",
-        status
-    );
-
-    Print(msg);
-
-    if ((status &
-         STATUS_DRIVER) == 0)
-    {
-        Print(
-            (CHAR16*)
-            L"virtio_common: DRIVER status not accepted\n"
-        );
-
-        return false;
-    }
-
-    Print(
-        (CHAR16*)
-        L"virtio_common: negotiating features\n"
-    );
-
-    if (h->device_id ==
-        VIRTIO_NET_LEGACY_DEVICE_ID)
-    {
-        if (!negotiate_legacy_network_features(h))
-        {
-            Print(
-                (CHAR16*)
-                L"virtio_common: feature negotiation failed\n"
-            );
-
-            virtio_write8(
-                h,
-                REG_STATUS,
-                STATUS_ACKNOWLEDGE |
-                STATUS_DRIVER |
-                STATUS_FAILED
-            );
-
+    if (h->modern) {
+        const uint64_t required = VIRTIO_F_VERSION_1;
+        const uint64_t mask = wanted_features | required;
+        if (!negotiate_modern_features(h, mask)) {
+            set_device_status(h, STATUS_FAILED);
             return false;
         }
-    }
-    else
-    {
-        Print(
-            (CHAR16*)
-            L"virtio_common: unsupported VirtIO device mode\n"
-        );
 
+        uint8_t status = get_device_status(h);
+        status |= STATUS_FEATURES_OK;
+        set_device_status(h, status);
+        if (!(get_device_status(h) & STATUS_FEATURES_OK)) {
+            set_device_status(h, STATUS_FAILED);
+            return false;
+        }
+
+        return (get_device_status(h) & STATUS_FAILED) == 0;
+    }
+
+    h->host_features = read_legacy_features(h);
+    const uint32_t agreed = static_cast<uint32_t>(h->host_features & static_cast<uint64_t>(wanted_features));
+    write_transport32(h, LEG_GUEST_FEATURES, agreed);
+    h->negotiated_features = agreed;
+    write_transport32(h, LEG_GUEST_PAGE_SIZE, 4096);
+
+    uint8_t status = get_device_status(h);
+    status |= STATUS_FEATURES_OK;
+    set_device_status(h, status);
+    return (get_device_status(h) & STATUS_FAILED) == 0;
+}
+
+uint16_t queue_max_size(DeviceHandle* h, uint16_t queue_index)
+{
+    if (!h)
+        return 0;
+
+    if (h->modern) {
+        common_write16(h, MOD_QUEUE_SELECT, queue_index);
+        return common_read16(h, MOD_QUEUE_SIZE);
+    }
+
+    write_transport16(h, LEG_QUEUE_SELECT, queue_index);
+    return read_transport16(h, LEG_QUEUE_SIZE);
+}
+
+bool setup_queue(
+    DeviceHandle* h,
+    uint16_t queue_index,
+    void* memory,
+    uint32_t requested_size,
+    VirtQueueView* out_view)
+{
+    if (!h || !memory || !out_view || requested_size == 0)
         return false;
-    }
 
-    virtio_write32(
-        h,
-        REG_GUEST_PAGE_SIZE,
-        4096
-    );
-
-    const uint32_t page_size =
-        virtio_read32(
-            h,
-            REG_GUEST_PAGE_SIZE
-        );
-
-    UnicodeSPrint(
-        msg,
-        sizeof(msg),
-        (CHAR16*)
-        L"virtio_common: guest_page_size=%u\n",
-        page_size
-    );
-
-    Print(msg);
-
-    if (page_size != 4096)
-    {
-        Print(
-            (CHAR16*)
-            L"virtio_common: invalid guest page size\n"
-        );
-
+    const uintptr_t address = reinterpret_cast<uintptr_t>(memory);
+    if ((address & 0xFFFu) != 0)
         return false;
-    }
 
-    status =
-        virtio_read8(
-            h,
-            REG_STATUS
-        );
-
-    status |=
-        STATUS_FEATURES_OK;
-
-    virtio_write8(
-        h,
-        REG_STATUS,
-        status
-    );
-
-    status =
-        virtio_read8(
-            h,
-            REG_STATUS
-        );
-
-    UnicodeSPrint(
-        msg,
-        sizeof(msg),
-        (CHAR16*)
-        L"virtio_common: status after FEATURES_OK=0x%02x\n",
-        status
-    );
-
-    Print(msg);
-
-    if ((status &
-         STATUS_FEATURES_OK) == 0)
-    {
-        Print(
-            (CHAR16*)
-            L"virtio_common: device rejected FEATURES_OK\n"
-        );
-
-        virtio_write8(
-            h,
-            REG_STATUS,
-            status |
-            STATUS_FAILED
-        );
-
+    uint16_t max_size = queue_max_size(h, queue_index);
+    if (max_size == 0)
         return false;
-    }
 
-    void* test_dma =
-        dma::alloc(
-            4096,
-            4096
-        );
-
-    if (!test_dma)
-    {
-        Print(
-            (CHAR16*)
-            L"virtio_common: DMA allocation failed\n"
-        );
-
-        virtio_write8(
-            h,
-            REG_STATUS,
-            status |
-            STATUS_FAILED
-        );
-
+    uint32_t qsize = requested_size;
+    if (qsize > max_size)
+        qsize = max_size;
+    if (qsize == 0)
         return false;
+
+    if (h->modern) {
+        common_write16(h, MOD_QUEUE_SELECT, queue_index);
+        common_write16(h, MOD_QUEUE_SIZE, static_cast<uint16_t>(qsize));
+        VirtQueueView view = virtqueue_ops::view_from_mem(memory, qsize);
+        virtqueue_ops::init_rings(&view);
+        common_write64(h, MOD_QUEUE_DESC, reinterpret_cast<uint64_t>(view.desc));
+        common_write64(h, MOD_QUEUE_DRIVER, reinterpret_cast<uint64_t>(view.avail));
+        common_write64(h, MOD_QUEUE_DEVICE, reinterpret_cast<uint64_t>(view.used));
+        barrier();
+        common_write16(h, MOD_QUEUE_ENABLE, 1);
+        h->queue_sizes[queue_index < 8 ? queue_index : 0] = static_cast<uint16_t>(qsize);
+        *out_view = view;
+        return true;
     }
 
-    UnicodeSPrint(
-        msg,
-        sizeof(msg),
-        (CHAR16*)
-        L"virtio_common: DMA test OK at %p\n",
-        test_dma
-    );
-
-    Print(msg);
-
-    Print(
-        (CHAR16*)
-        L"virtio_common: reset + feature negotiation complete\n"
-    );
-
+    write_transport16(h, LEG_QUEUE_SELECT, queue_index);
+    write_transport16(h, LEG_QUEUE_SIZE, static_cast<uint16_t>(qsize));
+    VirtQueueView view = virtqueue_ops::view_from_mem(memory, qsize);
+    virtqueue_ops::init_rings(&view);
+    write_transport32(h, LEG_QUEUE_PFN, static_cast<uint32_t>(address >> 12));
+    h->queue_sizes[queue_index < 8 ? queue_index : 0] = static_cast<uint16_t>(qsize);
+    *out_view = view;
     return true;
 }
+
+bool program_modern_queue_addr(
+    DeviceHandle* h,
+    uint16_t queue_index,
+    uint64_t desc,
+    uint64_t avail,
+    uint64_t used)
+{
+    if (!h || !h->modern)
+        return false;
+    common_write16(h, MOD_QUEUE_SELECT, queue_index);
+    common_write64(h, MOD_QUEUE_DESC, desc);
+    common_write64(h, MOD_QUEUE_DRIVER, avail);
+    common_write64(h, MOD_QUEUE_DEVICE, used);
+    barrier();
+    common_write16(h, MOD_QUEUE_ENABLE, 1);
+    return true;
+}
+
+bool notify_queue(DeviceHandle* h, uint16_t queue_index)
+{
+    if (!h)
+        return false;
+    barrier();
+
+    if (h->modern) {
+        common_write16(h, MOD_QUEUE_SELECT, queue_index);
+        const uint16_t off = common_read16(h, MOD_QUEUE_NOTIFY_OFF);
+        const uint64_t addr = h->notify_cfg + static_cast<uint64_t>(off) * h->notify_off_multiplier;
+        *reinterpret_cast<volatile uint16_t*>(static_cast<UINTN>(addr)) = queue_index;
+        return true;
+    }
+
+    write_transport16(h, LEG_QUEUE_NOTIFY, queue_index);
+    return true;
+}
+
+uint8_t read_device_config8(const DeviceHandle* h, uint32_t offset)
+{
+    if (!h) return 0;
+    if (h->modern) return mmio8(h->device_cfg, offset);
+    if (h->transport == Transport::PCI_IO) return io_in8(static_cast<uint16_t>(h->bar0 + LEG_CONFIG + offset));
+    return mmio8(h->bar0, LEG_CONFIG + offset);
+}
+
+uint16_t read_device_config16(const DeviceHandle* h, uint32_t offset)
+{
+    if (!h) return 0;
+    if (h->modern) return mmio16(h->device_cfg, offset);
+    if (h->transport == Transport::PCI_IO) return io_in16(static_cast<uint16_t>(h->bar0 + LEG_CONFIG + offset));
+    return mmio16(h->bar0, LEG_CONFIG + offset);
+}
+
+uint32_t read_device_config32(const DeviceHandle* h, uint32_t offset)
+{
+    if (!h) return 0;
+    if (h->modern) return mmio32(h->device_cfg, offset);
+    if (h->transport == Transport::PCI_IO) return io_in32(static_cast<uint16_t>(h->bar0 + LEG_CONFIG + offset));
+    return mmio32(h->bar0, LEG_CONFIG + offset);
+}
+
+uint64_t read_device_config64(const DeviceHandle* h, uint32_t offset)
+{
+    if (!h) return 0;
+    const uint64_t lo = read_device_config32(h, offset);
+    const uint64_t hi = read_device_config32(h, offset + 4);
+    return (hi << 32) | lo;
+}
+
+uint64_t block_capacity_sectors(const DeviceHandle* h)
+{
+    return read_device_config64(h, 0);
+}
+
+bool block_flush_supported(const DeviceHandle* h)
+{
+    return h && ((h->negotiated_features & VIRTIO_BLK_F_FLUSH) != 0);
+}
+
+} // namespace virtio_common

@@ -6,6 +6,8 @@
 #include "console.hpp"
 #include "drivers/keymap.hpp"
 #include "drivers/ata_devices.hpp"
+#include "drivers/acpi.hpp"
+#include "drivers/pci.hpp"
 #include "events.hpp"
 #include "font8x8.h"
 #include "fs/fat32.hpp"
@@ -16,12 +18,19 @@
 #include "process.hpp"
 #include "virtio_input.hpp"
 #include "input_bridge.hpp"
-
+#include "drivers/dhcp_dns_stack.hpp"
+#include "drivers/virtio_blk.hpp"
+#include "fs/vfs_blk_adapter.hpp"
+#include "net/net.hpp"
+#include "drivers/uefi_smp.hpp"
 
 extern "C"
 {
 #include <efi.h>
 }
+
+extern "C" bool blockos_space_init(EFI_SYSTEM_TABLE*);
+extern "C" bool blockos_space_recovery_requested();
 extern "C"
 {
 #include <efilib.h>
@@ -790,6 +799,66 @@ static void draw_splash(
 
 /*
  * ============================================================
+ * PCIe ECAM / ACPI MCFG discovery
+ * ============================================================
+ */
+
+static const acpi::Rsdp* find_uefi_rsdp(EFI_SYSTEM_TABLE* table)
+{
+    if (!table)
+        return nullptr;
+
+    // ACPI 2.0 GUID: 8868E871-E4F1-11D3-BC22-0080C73C8881
+    EFI_GUID acpi20 = {
+        0x8868e871, 0xe4f1, 0x11d3,
+        {0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}
+    };
+
+    // ACPI 1.0 GUID: EB9D2D30-2D88-11D3-9A16-0090273FC14D
+    EFI_GUID acpi10 = {
+        0xeb9d2d30, 0x2d88, 0x11d3,
+        {0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d}
+    };
+
+    for (UINTN i = 0; i < table->NumberOfTableEntries; ++i)
+    {
+        EFI_CONFIGURATION_TABLE& entry = table->ConfigurationTable[i];
+
+        if (CompareGuid(&entry.VendorGuid, &acpi20) ||
+            CompareGuid(&entry.VendorGuid, &acpi10))
+        {
+            return reinterpret_cast<const acpi::Rsdp*>(entry.VendorTable);
+        }
+    }
+
+    return nullptr;
+}
+
+static void configure_pci_ecam(EFI_SYSTEM_TABLE* table)
+{
+    const acpi::Rsdp* rsdp = find_uefi_rsdp(table);
+    if (!rsdp)
+        return;
+
+    uint64_t ecam = 0;
+    uint16_t segment = 0;
+    uint8_t start_bus = 0;
+    uint8_t end_bus = 0;
+
+    if (acpi::parse_mcfg(
+            rsdp,
+            &ecam,
+            &segment,
+            &start_bus,
+            &end_bus))
+    {
+        if (segment == 0 && ecam != 0 && end_bus >= start_bus)
+            pci_set_ecam(ecam, start_bus, end_bus);
+    }
+}
+
+/*
+ * ============================================================
  * EFI entry point
  * ============================================================
  */
@@ -821,13 +890,15 @@ extern "C" EFI_STATUS EFIAPI efi_main(
             NULL,
             (void**) &gop);
 
+#ifndef BLOCKOS_SERVER_MODE
     if (EFI_ERROR(status) || gop == NULL)
     {
-        Print(
-            (CHAR16*) L"Couldn't locate GOP\n");
-
+        Print((CHAR16*) L"Couldn't locate GOP\n");
         return EFI_ABORTED;
     }
+#endif
+
+    const bool have_gop = !EFI_ERROR(status) && gop != NULL;
 
     /*
      * ========================================================
@@ -835,22 +906,25 @@ extern "C" EFI_STATUS EFIAPI efi_main(
      * ========================================================
      */
 
-    Framebuffer fb;
+    Framebuffer fb{};
 
-    fb.Base =
-        (uint8_t*) (UINTN)
-            gop->Mode->FrameBufferBase;
+    if (have_gop)
+    {
+        fb.Base =
+            (uint8_t*) (UINTN)
+                gop->Mode->FrameBufferBase;
 
-    fb.Width =
-        gop->Mode->Info->HorizontalResolution;
+        fb.Width =
+            gop->Mode->Info->HorizontalResolution;
 
-    fb.Height =
-        gop->Mode->Info->VerticalResolution;
+        fb.Height =
+            gop->Mode->Info->VerticalResolution;
 
-    fb.PixelsPerScanLine =
-        gop->Mode->Info->PixelsPerScanLine;
+        fb.PixelsPerScanLine =
+            gop->Mode->Info->PixelsPerScanLine;
 
-    fb.PixelsPerPixel = 4;
+        fb.PixelsPerPixel = 4;
+    }
 
     /*
      * ========================================================
@@ -858,10 +932,9 @@ extern "C" EFI_STATUS EFIAPI efi_main(
      * ========================================================
      */
 
-    UINTN backbuffer_size =
-        (UINTN) fb.Width *
-        (UINTN) fb.Height *
-        4;
+    UINTN backbuffer_size = have_gop
+        ? (UINTN) fb.Width * (UINTN) fb.Height * 4
+        : 0;
 
     /*
      * ========================================================
@@ -929,20 +1002,21 @@ extern "C" EFI_STATUS EFIAPI efi_main(
 
     void* backbuf = NULL;
 
-    status =
-        (EFI_STATUS) uefi_call_wrapper(
-            (void*) BS->AllocatePool,
-            3,
-            EfiLoaderData,
-            backbuffer_size,
-            &backbuf);
-
-    if (EFI_ERROR(status))
+    if (backbuffer_size != 0)
     {
-        Print(
-            (CHAR16*) L"AllocatePool failed for backbuffer: %r\n");
+        status =
+            (EFI_STATUS) uefi_call_wrapper(
+                (void*) BS->AllocatePool,
+                3,
+                EfiLoaderData,
+                backbuffer_size,
+                &backbuf);
 
-        return EFI_ABORTED;
+        if (EFI_ERROR(status))
+        {
+            Print((CHAR16*) L"AllocatePool failed for backbuffer: %r\n");
+            return EFI_ABORTED;
+        }
     }
 
     /*
@@ -951,8 +1025,11 @@ extern "C" EFI_STATUS EFIAPI efi_main(
      * ========================================================
      */
 
-    const size_t heap_size =
-        4 * 1024 * 1024;
+#ifdef BLOCKOS_SERVER_MODE
+    const size_t heap_size = 32 * 1024 * 1024;
+#else
+    const size_t heap_size = 4 * 1024 * 1024;
+#endif
 
     void* heapbuf = NULL;
 
@@ -971,6 +1048,15 @@ extern "C" EFI_STATUS EFIAPI efi_main(
 
         return EFI_ABORTED;
     }
+
+    // Discover PCIe ECAM from ACPI MCFG before leaving firmware services.
+    configure_pci_ecam(SystemTable);
+
+#ifdef BLOCKOS_SERVER_MODE
+    // Start secondary CPUs before the final memory-map query so their
+    // firmware allocations are included in the ExitBootServices map key.
+    uefi_smp::start_aps(SystemTable);
+#endif
 
     /*
      * ========================================================
@@ -1024,6 +1110,19 @@ extern "C" EFI_STATUS EFIAPI efi_main(
         heapbuf,
         heap_size);
 
+#ifdef BLOCKOS_SERVER_MODE
+    // Initialize hardware while UEFI console/boot services are still live.
+    // The allocated DMA queues/buffers are then included in the final memory map.
+    const bool server_blk_ready = virtio_blk::init();
+    const bool server_net_ready = (blockos::net::init(), blockos::net::is_initialized());
+    (void)server_net_ready;
+    if (server_blk_ready)
+        vfs_blk_adapter::init_backend();
+    else
+        vfs_blk_adapter::init_backend();
+    blockos_space_init(SystemTable);
+#endif
+
     /*
      * ========================================================
      * Exit Boot Services
@@ -1050,6 +1149,10 @@ extern "C" EFI_STATUS EFIAPI efi_main(
 
     cpu_tables.init();
 
+#ifdef BLOCKOS_SERVER_MODE
+    uefi_smp::release_aps();
+#endif
+
     /*
      * ========================================================
      * Input for boot splash only
@@ -1075,62 +1178,66 @@ extern "C" EFI_STATUS EFIAPI efi_main(
      * Publish framebuffer to the userspace X11 KDrive backend.
      */
 
-    struct BlockOSDisplayInfo
+    if (have_gop)
     {
-        uint32_t magic;
-        uint32_t version;
-        uint64_t framebuffer_phys;
-        uint64_t framebuffer_size;
-        uint32_t width;
-        uint32_t height;
-        uint32_t stride;
-        uint32_t bpp;
-        uint32_t depth;
-    };
+        struct BlockOSDisplayInfo
+        {
+            uint32_t magic;
+            uint32_t version;
+            uint64_t framebuffer_phys;
+            uint64_t framebuffer_size;
+            uint32_t width;
+            uint32_t height;
+            uint32_t stride;
+            uint32_t bpp;
+            uint32_t depth;
+        };
 
-    BlockOSDisplayInfo dinfo{
-        0x424F5346u,
-        1u,
-        (uint64_t)(uintptr_t)fb.Base,
-        (uint64_t)fb.PixelsPerScanLine *
-            (uint64_t)fb.Height *
-            4ull,
-        fb.Width,
-        fb.Height,
-        fb.PixelsPerScanLine,
-        32u,
-        32u
-    };
+        BlockOSDisplayInfo dinfo{
+            0x424F5346u,
+            1u,
+            (uint64_t)(uintptr_t)fb.Base,
+            (uint64_t)fb.PixelsPerScanLine *
+                (uint64_t)fb.Height *
+                4ull,
+            fb.Width,
+            fb.Height,
+            fb.PixelsPerScanLine,
+            32u,
+            32u
+        };
 
-    vfs::write_file(
-        "/system/display.info",
-        reinterpret_cast<const uint8_t*>(&dinfo),
-        sizeof(dinfo));
+        vfs::write_file(
+            "/system/display.info",
+            reinterpret_cast<const uint8_t*>(&dinfo),
+            sizeof(dinfo));
 
-    if (!vfs::is_device("/devices/display"))
-    {
-        vfs::DeviceNodeInfo di{};
+        if (!vfs::is_device("/devices/display"))
+        {
+            vfs::DeviceNodeInfo di{};
 
-        di.type = vfs::DEVICE_GPU;
-        di.device_id = 0;
-        di.base = (uint64_t)(uintptr_t)fb.Base;
-        di.size = dinfo.framebuffer_size;
+            di.type = vfs::DEVICE_GPU;
+            di.device_id = 0;
+            di.base = (uint64_t)(uintptr_t)fb.Base;
+            di.size = dinfo.framebuffer_size;
 
-        vfs::create_device_node(
-            "/devices/display",
-            di);
-    }
+            vfs::create_device_node(
+                "/devices/display",
+                di);
+        }
 
-    if (!vfs::is_device("/devices/x11-input"))
-    {
-        vfs::DeviceNodeInfo ii{};
+        if (!vfs::is_device("/devices/x11-input"))
+        {
+            vfs::DeviceNodeInfo ii{};
 
-        ii.type = vfs::DEVICE_INPUT;
-        ii.device_id = 0;
+            ii.type = vfs::DEVICE_INPUT;
+            ii.device_id = 0;
 
-        vfs::create_device_node(
-            "/devices/x11-input",
-            ii);
+            vfs::create_device_node(
+                "/devices/x11-input",
+                ii);
+        }
+
     }
 
     process::init();
@@ -1145,8 +1252,26 @@ extern "C" EFI_STATUS EFIAPI efi_main(
 
     Console console;
 
+#ifndef BLOCKOS_SERVER_MODE
     init_block_devices(
         console);
+#endif
+
+#ifdef BLOCKOS_SERVER_MODE
+    // Runtime server path: expose the already-initialized VirtIO disk and
+    // obtain an OCI/LAN address by DHCP without using UEFI console services.
+    if (virtio_blk::is_ready())
+    {
+        vfs::DeviceNodeInfo di{};
+        di.type = vfs::DEVICE_DISK;
+        di.device_id = 0;
+        di.size = virtio_blk::capacity_sectors() * 512ULL;
+        vfs::create_device_node("/devices/virtio-blk0", di);
+    }
+
+    if (blockos::net::is_initialized())
+        dynamic_net_stack.configure(1500000);
+#else
 
     /*
      * ========================================================
@@ -1195,6 +1320,8 @@ extern "C" EFI_STATUS EFIAPI efi_main(
         __asm__ volatile("pause");
     }
 
+#endif
+
     /*
      * ========================================================
      * First userspace program: /bin/sh
@@ -1203,10 +1330,19 @@ extern "C" EFI_STATUS EFIAPI efi_main(
 
     uint32_t shell_size = 0;
 
+    const char* first_user = blockos_space_recovery_requested()
+        ? "/bin/recovery"
+        : "/bin/sh";
+
     const uint8_t* shell_elf =
         vfs::read_file(
-            "/bin/sh",
+            first_user,
             &shell_size);
+
+    if ((!shell_elf || shell_size == 0) && blockos_space_recovery_requested()) {
+        first_user = "/bin/sh";
+        shell_elf = vfs::read_file(first_user, &shell_size);
+    }
 
     if (!shell_elf || shell_size == 0)
     {

@@ -7,7 +7,8 @@ EFI_INCL       := /usr/include/efi
 EFI_INCL_X86   := /usr/include/efi/x86_64
 
 GNU_EFI_LIBDIR := /usr/lib
-GNU_EFI_LDS    := $(GNU_EFI_LIBDIR)/elf_x86_64_efi.lds
+GNU_EFI_LDS_SRC := $(GNU_EFI_LIBDIR)/elf_x86_64_efi.lds
+GNU_EFI_LDS     := $(BUILD_DIR)/elf_x86_64_efi_blockos.lds
 
 EFI_CRT        := $(GNU_EFI_LIBDIR)/crt0-efi-x86_64.o
 EFI_LIB        := $(GNU_EFI_LIBDIR)/libefi.a
@@ -17,6 +18,9 @@ CXX      := g++
 LD       := ld
 OBJCOPY  := objcopy
 PYTHON   := python3
+
+# BlockOS now builds with the server/embedded-safe path by default.
+SERVER_MODE ?= 1
 
 # ============================================================
 # C++ FLAGS
@@ -54,6 +58,10 @@ CXXFLAGS := \
 	-MMD \
 	-MP \
 	-Iinclude
+
+ifeq ($(SERVER_MODE),1)
+CXXFLAGS += -DBLOCKOS_SERVER_MODE
+endif
 
 # ============================================================
 # Floating-point flags for libc/src/math.cpp
@@ -94,6 +102,7 @@ LDFLAGS := \
 	-nostdlib \
 	-znocombreloc \
 	-T$(GNU_EFI_LDS) \
+	-z max-page-size=0x1000 \
 	-shared \
 	-Bsymbolic
 
@@ -238,10 +247,37 @@ $(EFI_LIB_WEAK): $(EFI_LIB)
 		$@
 
 # ============================================================
+# GNU-EFI linker script: ImageBase=0 for GNU-EFI self-relocation,
+# actual image sections start at 0x400000 so PE/COFF sections are
+# not below the PE image base.
+# ============================================================
+
+$(GNU_EFI_LDS): $(GNU_EFI_LDS_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@awk '\
+BEGIN { changed=0 } \
+{ \
+    if (!changed && $$0 ~ /^[[:space:]]*\. = 0;[[:space:]]*$$/) { \
+        print "  ImageBase = 0;"; \
+        print "  . = 0x400000;"; \
+        changed=1; \
+        next; \
+    } \
+    if (changed && $$0 ~ /^[[:space:]]*ImageBase[[:space:]]*=[[:space:]]*\.;[[:space:]]*$$/) \
+        next; \
+    print; \
+} \
+END { if (!changed) exit 2; }' \
+		$(GNU_EFI_LDS_SRC) > $@.tmp
+	@grep -q 'ImageBase = 0;' $@.tmp
+	@grep -q '\. = 0x400000;' $@.tmp
+	@mv $@.tmp $@
+
+# ============================================================
 # LINK KERNEL.SO
 # ============================================================
 
-$(SO_OUT): $(OBJ) $(EFI_LIB_WEAK)
+$(SO_OUT): $(OBJ) $(EFI_LIB_WEAK) $(GNU_EFI_LDS)
 	@mkdir -p $(BUILD_DIR)
 
 	@echo ""
@@ -290,6 +326,9 @@ $(EFI_OUT): $(SO_OUT)
 		-j .rela.* \
 		-j .reloc \
 		--subsystem=10 \
+		--image-base=0x400000 \
+		--section-alignment=0x1000 \
+		--file-alignment=0x200 \
 		--target=efi-app-x86_64 \
 		$(SO_OUT) \
 		$(EFI_OUT)
@@ -380,9 +419,18 @@ rebuild:
 # RUN
 # ============================================================
 
-.PHONY: run
+.PHONY: run server server-run
 
 run: all
+	sh build_and_run.sh
+
+server:
+	$(MAKE) clean
+	$(MAKE) SERVER_MODE=1 all
+
+server-run:
+	$(MAKE) clean
+	$(MAKE) SERVER_MODE=1 all
 	sh build_and_run.sh
 
 # ============================================================

@@ -4,6 +4,7 @@
 #include "tls.hpp"
 #include <string.h>
 extern "C" uint64_t timer_uptime_ms();
+extern "C" void blockos_space_tick(uint64_t now_ms);
 
 namespace preempt {
 
@@ -81,8 +82,24 @@ static process::Process* pick_next(process::Process* skip) {
 }
 
 /* Saves `from`'s state, activates `to`, and returns `to`'s frame to load. */
+static bool isolation_ok(const process::Process* p) {
+    if (!p || !p->pml4 || !p->frame_valid) return false;
+    if (p->saved_frame.cs != 0x1b || p->saved_frame.ss != 0x23) return false;
+    if (p->saved_frame.rip == 0 || p->saved_frame.rsp == 0) return false;
+    if (p->saved_frame.rsp >= 0x0000800000000000ULL) return false;
+    if (p->saved_frame.rip >= 0x0000800000000000ULL) return false;
+    return true;
+}
+
 static void switch_to(process::Process* from, const TrapFrame* from_state,
                       process::Process* to, TrapFrame* out) {
+    if (!isolation_ok(to)) {
+        if (to) {
+            to->state = process::State::TERMINATED;
+            to->frame_valid = false;
+        }
+        return;
+    }
     if (from && from->state == process::State::RUNNING) {
         from->saved_frame = *from_state;
         from->frame_valid = true;
@@ -100,6 +117,8 @@ static void switch_to(process::Process* from, const TrapFrame* from_state,
 
 bool on_timer(InterruptFrame* f) {
     if (!f) return false;
+    const uint64_t now_ms = timer_uptime_ms();
+    blockos_space_tick(now_ms);
     wake_timed_tasks();
     if ((f->cs & 3) != 3) return false;  /* kernel was running - see note above */
 
@@ -109,7 +128,9 @@ bool on_timer(InterruptFrame* f) {
 
     TrapFrame cur_state, next_state;
     to_trap(f, &cur_state);
+    if (!isolation_ok(next)) { next->state = process::State::TERMINATED; return false; }
     switch_to(cur, &cur_state, next, &next_state);
+    if (next->state != process::State::RUNNING) return false;
     from_trap(&next_state, f);
     return true;
 }
@@ -122,7 +143,9 @@ bool yield_from_syscall(BlockOSSyscallFrame* f) {
 
     TrapFrame cur_state, next_state;
     to_trap(f, &cur_state);
+    if (!isolation_ok(next)) { next->state = process::State::TERMINATED; return false; }
     switch_to(cur, &cur_state, next, &next_state);
+    if (next->state != process::State::RUNNING) return false;
     from_trap(&next_state, f);
     return true;
 }
@@ -133,6 +156,8 @@ bool block_from_syscall(BlockOSSyscallFrame* f) {
     if (!cur) return false;
     process::Process* next = pick_next(cur);
     if (!next) return false;
+
+    if (!isolation_ok(next)) { next->state = process::State::TERMINATED; return false; }
 
     TrapFrame cur_state, next_state;
     to_trap(f, &cur_state);
@@ -155,6 +180,8 @@ bool block_until_from_syscall(BlockOSSyscallFrame* f, uint64_t deadline_ms) {
     if (!cur) return false;
     process::Process* next = pick_next(cur);
     if (!next) return false;
+
+    if (!isolation_ok(next)) { next->state = process::State::TERMINATED; return false; }
 
     TrapFrame cur_state, next_state;
     to_trap(f, &cur_state);
@@ -184,6 +211,12 @@ bool on_exit(BlockOSSyscallFrame* f) {
     if (!next) {
         process::set_current(nullptr);
         return false;                    /* caller returns into the kernel */
+    }
+
+    if (!isolation_ok(next)) {
+        next->state = process::State::TERMINATED;
+        process::set_current(nullptr);
+        return false;
     }
 
     TrapFrame next_state;

@@ -15,3 +15,6 @@ uint64_t pci_read_bar(uint8_t bus, uint8_t slot, uint8_t func, int bar_index);
 struct PciAddress { uint8_t bus, slot, func; };
 
 bool pci_device_exists(uint8_t bus, uint8_t slot, uint8_t func);
+
+// Configure ACPI MCFG/PCIe ECAM access. Passing base=0 disables ECAM.
+void pci_set_ecam(uint64_t base, uint8_t start_bus, uint8_t end_bus);

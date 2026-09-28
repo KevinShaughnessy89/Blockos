@@ -16,9 +16,9 @@ namespace blockos::net {
 namespace {
 
 MacAddress g_mac{};
-IPv4Address g_ip{{10, 0, 2, 15}};
-IPv4Address g_mask{{255, 255, 255, 0}};
-IPv4Address g_gw{{10, 0, 2, 2}};
+IPv4Address g_ip{{0, 0, 0, 0}};
+IPv4Address g_mask{{0, 0, 0, 0}};
+IPv4Address g_gw{{0, 0, 0, 0}};
 
 bool g_initialized = false;
 
@@ -92,6 +92,17 @@ void set_gateway(
     const IPv4Address& gw
 )
 {
+    g_gw = gw;
+}
+
+void set_ipv4(
+    const IPv4Address& ip,
+    const IPv4Address& mask,
+    const IPv4Address& gw
+)
+{
+    g_ip = ip;
+    g_mask = mask;
     g_gw = gw;
 }
 

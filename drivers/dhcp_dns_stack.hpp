@@ -1,34 +1,39 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
-
-struct DhcpHeader {
-    uint8_t  op; uint8_t htype; uint8_t hlen; uint8_t hops;
-    uint32_t xid; uint16_t secs; uint16_t flags;
-    uint32_t ciaddr; uint32_t yiaddr; uint32_t siaddr; uint32_t giaddr;
-    uint8_t  chaddr[16]; char sname[64]; char file[128];
-    uint32_t magic_cookie;
-} __attribute__((packed));
-
-struct DnsHeader {
-    uint16_t id; uint16_t flags;
-    uint16_t q_count; uint16_t ans_count;
-    uint16_t auth_count; uint16_t add_count;
-} __attribute__((packed));
+#include "../net/udp.hpp"
 
 class DhcpDnsEngine {
+public:
+    DhcpDnsEngine();
+
+    bool configure(uint32_t timeout_ticks = 3000000);
+    void poll();
+    bool ready() const { return dhcp_success; }
+
+    uint32_t get_assigned_ip() const { return assigned_ip; }
+    uint32_t get_netmask() const { return subnet_mask; }
+    uint32_t get_gateway() const { return gateway_ip; }
+    uint32_t get_dns() const { return dns_server_ip; }
+
+    void send_dhcp_discover();
+
 private:
     uint32_t transaction_id;
     uint32_t assigned_ip;
+    uint32_t subnet_mask;
+    uint32_t gateway_ip;
     uint32_t dns_server_ip;
-    bool     dhcp_success;
+    uint32_t server_ip;
+    uint8_t client_mac[6];
+    uint8_t state;
+    bool dhcp_success;
 
-public:
-    DhcpDnsEngine();
-    void send_dhcp_discover();
-    bool parse_dhcp_offer(uint8_t* buffer, size_t len);
-    uint32_t resolve_domain_via_dns(const char* domain_name);
-    uint32_t get_assigned_ip() { return assigned_ip; }
+    static void udp_callback(const blockos::net::UdpDatagram& datagram);
+    void on_packet(const uint8_t* data, size_t len);
+    void send_request(uint32_t requested_ip, uint32_t server);
+
+    static DhcpDnsEngine* active;
 };
 
 extern DhcpDnsEngine dynamic_net_stack;
