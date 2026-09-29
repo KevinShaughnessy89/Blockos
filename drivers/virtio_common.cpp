@@ -443,6 +443,31 @@ bool negotiate_modern_features(DeviceHandle* h, uint64_t want_mask_low)
     return true;
 }
 
+bool negotiate_features(void* bar0, bool mmio, uint32_t want_mask)
+{
+    if (!bar0)
+        return false;
+    DeviceHandle tmp{};
+    tmp.bar0 = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(bar0));
+    tmp.transport = mmio ? Transport::PCI_MMIO : Transport::PCI_IO;
+    tmp.mmio = mmio;
+    const uint32_t host = static_cast<uint32_t>(read_legacy_features(&tmp));
+    const uint32_t agreed = host & want_mask;
+    write_transport32(&tmp, LEG_GUEST_FEATURES, agreed);
+    return true;
+}
+
+uint32_t read_host_features(void* bar0, bool mmio)
+{
+    if (!bar0)
+        return 0;
+    DeviceHandle tmp{};
+    tmp.bar0 = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(bar0));
+    tmp.transport = mmio ? Transport::PCI_MMIO : Transport::PCI_IO;
+    tmp.mmio = mmio;
+    return static_cast<uint32_t>(read_legacy_features(&tmp));
+}
+
 bool device_init(DeviceHandle* h, uint64_t wanted_features)
 {
     if (!h)

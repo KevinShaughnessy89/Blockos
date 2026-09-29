@@ -20,6 +20,9 @@
 #include "input_bridge.hpp"
 #include "drivers/dhcp_dns_stack.hpp"
 #include "drivers/virtio_blk.hpp"
+#include "drivers/nvme.hpp"
+#include "drivers/audio.hpp"
+#include "drivers/power.hpp"
 #include "fs/vfs_blk_adapter.hpp"
 #include "net/net.hpp"
 #include "drivers/uefi_smp.hpp"
@@ -30,6 +33,7 @@ extern "C"
 }
 
 extern "C" bool blockos_space_init(EFI_SYSTEM_TABLE*);
+extern "C" bool blockos_storage_init();
 extern "C" bool blockos_space_recovery_requested();
 extern "C"
 {
@@ -1114,12 +1118,20 @@ extern "C" EFI_STATUS EFIAPI efi_main(
     // Initialize hardware while UEFI console/boot services are still live.
     // The allocated DMA queues/buffers are then included in the final memory map.
     const bool server_blk_ready = virtio_blk::init();
+    const bool server_nvme_ready = nvme::init();
+    const bool server_audio_ready = audio::init();
+    const bool server_power_ready = power::init(SystemTable);
     const bool server_net_ready = (blockos::net::init(), blockos::net::is_initialized());
+    (void)server_blk_ready;
+    (void)server_nvme_ready;
+    (void)server_audio_ready;
+    (void)server_power_ready;
     (void)server_net_ready;
-    if (server_blk_ready)
-        vfs_blk_adapter::init_backend();
-    else
-        vfs_blk_adapter::init_backend();
+
+    /* Register the controller-neutral storage backend after all controllers
+       have had a chance to probe, then expose it to VFS. */
+    (void)blockos_storage_init();
+    (void)vfs_blk_adapter::init_backend();
     blockos_space_init(SystemTable);
 #endif
 
@@ -1267,6 +1279,24 @@ extern "C" EFI_STATUS EFIAPI efi_main(
         di.device_id = 0;
         di.size = virtio_blk::capacity_sectors() * 512ULL;
         vfs::create_device_node("/devices/virtio-blk0", di);
+    }
+
+    if (nvme::is_ready())
+    {
+        vfs::DeviceNodeInfo nvme_di{};
+        nvme_di.type = vfs::DEVICE_DISK;
+        nvme_di.device_id = 1;
+        nvme_di.size = nvme::capacity_sectors() * 512ULL;
+        vfs::create_device_node("/devices/nvme0", nvme_di);
+    }
+
+    if (audio::is_ready())
+    {
+        vfs::DeviceNodeInfo audio_di{};
+        audio_di.type = vfs::DEVICE_GENERIC;
+        audio_di.device_id = 0;
+        audio_di.size = 0;
+        vfs::create_device_node("/devices/audio0", audio_di);
     }
 
     if (blockos::net::is_initialized())
