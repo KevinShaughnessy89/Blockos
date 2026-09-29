@@ -2,7 +2,9 @@
 
 #include <cstdint>
 
-extern "C" struct EFI_SYSTEM_TABLE;
+extern "C" {
+#include <efi.h>
+}
 
 namespace power {
 
