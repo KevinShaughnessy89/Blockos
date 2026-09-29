@@ -1,5 +1,6 @@
 #include "uefi_smp.hpp"
 #include <stdint.h>
+#include <stddef.h>
 
 extern "C" {
 #include <efilib.h>
@@ -22,11 +23,21 @@ static void* g_startup_event = nullptr;
 static bool g_active = false;
 
 #pragma pack(push, 1)
+
 struct BlockOSMpProtocol;
+
 using GetNumberOfProcessorsFn = EFI_STATUS (EFIAPI *)(
-    BlockOSMpProtocol*, UINTN*, UINTN*);
+    BlockOSMpProtocol*,
+    UINTN*,
+    UINTN*
+);
+
 using GetProcessorInfoFn = EFI_STATUS (EFIAPI *)(
-    BlockOSMpProtocol*, UINTN, void*);
+    BlockOSMpProtocol*,
+    UINTN,
+    void*
+);
+
 using StartupAllApsFn = EFI_STATUS (EFIAPI *)(
     BlockOSMpProtocol*,
     void (EFIAPI *Procedure)(void*),
@@ -34,14 +45,36 @@ using StartupAllApsFn = EFI_STATUS (EFIAPI *)(
     EFI_EVENT WaitEvent,
     UINTN TimeoutInMicroseconds,
     void* ProcedureArgument,
-    UINTN** FailedCpuList);
+    UINTN** FailedCpuList
+);
+
 using StartupThisApFn = EFI_STATUS (EFIAPI *)(
-    BlockOSMpProtocol*, void (EFIAPI *Procedure)(void*), UINTN ProcessorNumber,
-    EFI_EVENT WaitEvent, UINTN TimeoutInMicroseconds, void* ProcedureArgument,
-    BOOLEAN* Finished);
-using SwitchBspFn = EFI_STATUS (EFIAPI *)(BlockOSMpProtocol*, UINTN, BOOLEAN);
-using EnableDisableApFn = EFI_STATUS (EFIAPI *)(BlockOSMpProtocol*, UINTN, BOOLEAN, uint32_t*);
-using WhoAmIFn = EFI_STATUS (EFIAPI *)(BlockOSMpProtocol*, UINTN*);
+    BlockOSMpProtocol*,
+    void (EFIAPI *Procedure)(void*),
+    UINTN ProcessorNumber,
+    EFI_EVENT WaitEvent,
+    UINTN TimeoutInMicroseconds,
+    void* ProcedureArgument,
+    BOOLEAN* Finished
+);
+
+using SwitchBspFn = EFI_STATUS (EFIAPI *)(
+    BlockOSMpProtocol*,
+    UINTN,
+    BOOLEAN
+);
+
+using EnableDisableApFn = EFI_STATUS (EFIAPI *)(
+    BlockOSMpProtocol*,
+    UINTN,
+    BOOLEAN,
+    uint32_t*
+);
+
+using WhoAmIFn = EFI_STATUS (EFIAPI *)(
+    BlockOSMpProtocol*,
+    UINTN*
+);
 
 struct BlockOSMpProtocol {
     GetNumberOfProcessorsFn GetNumberOfProcessors;
@@ -52,43 +85,94 @@ struct BlockOSMpProtocol {
     EnableDisableApFn EnableDisableAP;
     WhoAmIFn WhoAmI;
 };
+
 #pragma pack(pop)
 
 static BlockOSMpProtocol* g_mp = nullptr;
 
-static constexpr EFI_GUID MP_SERVICES_GUID = {
-    0x3fdda605, 0xa76e, 0x4f46,
-    {0xad, 0x29, 0x12, 0xf4, 0x53, 0x1b, 0x3d, 0x08}
+/*
+ * EFI_MP_SERVICES_PROTOCOL_GUID
+ *
+ * This must be an EFI_GUID object, because
+ * LocateProtocol() expects EFI_GUID*.
+ */
+static EFI_GUID MP_SERVICES_GUID = {
+    0x3fdda605,
+    0xa76e,
+    0x4f46,
+    {
+        0xad,
+        0x29,
+        0x12,
+        0xf4,
+        0x53,
+        0x1b,
+        0x3d,
+        0x08
+    }
 };
 
 static void EFIAPI ap_proc(void*)
 {
     UINTN who = 0;
+
     if (!g_mp || !g_mp->WhoAmI)
         return;
 
-    if (EFI_ERROR(g_mp->WhoAmI(g_mp, &who)))
+    if (EFI_ERROR(
+            g_mp->WhoAmI(
+                g_mp,
+                &who
+            ))) {
         return;
+    }
+
     if (who >= MAX_CPUS || !g_stacks[who])
         return;
 
-    // Switch away from the temporary firmware AP stack before Boot Services
-    // are exited. The function never returns, so its old stack frame is not
-    // referenced after this point.
+    /*
+     * Switch from the temporary firmware-provided AP stack
+     * to a BlockOS-owned stack before ExitBootServices().
+     */
     const uintptr_t stack_top =
-        reinterpret_cast<uintptr_t>(g_stacks[who]) + AP_STACK_SIZE - 32;
-    __asm__ volatile("mov %0, %%rsp" :: "r"(stack_top) : "memory");
+        reinterpret_cast<uintptr_t>(
+            g_stacks[who]
+        ) +
+        AP_STACK_SIZE -
+        32;
 
-    __atomic_add_fetch(&g_started, 1u, __ATOMIC_SEQ_CST);
+    __asm__ volatile(
+        "mov %0, %%rsp"
+        :
+        : "r"(stack_top)
+        : "memory"
+    );
 
-    while (!__atomic_load_n(&g_release, __ATOMIC_ACQUIRE))
+    __atomic_add_fetch(
+        &g_started,
+        1u,
+        __ATOMIC_SEQ_CST
+    );
+
+    /*
+     * Wait here until the BSP tells the APs that the
+     * firmware phase is finished.
+     */
+    while (!__atomic_load_n(
+        &g_release,
+        __ATOMIC_ACQUIRE
+    )) {
         __asm__ volatile("pause");
+    }
 
-    // The current scheduler/IDT is still BSP-oriented. Keep APs safely online
-    // without entering shared interrupt state until per-CPU scheduler tables
-    // are installed by the SMP scheduler layer.
+    /*
+     * The current scheduler/IDT is still BSP-oriented.
+     * Do not enter shared interrupt/scheduler state yet.
+     */
     for (;;) {
-        __asm__ volatile("cli; hlt");
+        __asm__ volatile(
+            "cli; hlt"
+        );
     }
 }
 
@@ -98,74 +182,156 @@ namespace uefi_smp {
 
 bool start_aps(EFI_SYSTEM_TABLE* system_table)
 {
-    if (!system_table || !system_table->BootServices)
+    if (!system_table)
         return false;
+
+    if (!system_table->BootServices)
+        return false;
+
     if (g_active)
         return true;
 
-    EFI_STATUS st = (EFI_STATUS)uefi_call_wrapper(
-        (void*)system_table->BootServices->LocateProtocol,
-        3,
-        (void*)&MP_SERVICES_GUID,
-        nullptr,
-        (void**)&g_mp);
+    g_started = 0;
+    g_release = 0;
+    g_cpu_count = 1;
+
+    EFI_STATUS st =
+        (EFI_STATUS)uefi_call_wrapper(
+            (void*)system_table
+                ->BootServices
+                ->LocateProtocol,
+            3,
+            &MP_SERVICES_GUID,
+            nullptr,
+            (void**)&g_mp
+        );
 
     if (EFI_ERROR(st) || !g_mp)
         return false;
 
     UINTN total = 1;
     UINTN enabled = 1;
-    st = g_mp->GetNumberOfProcessors(g_mp, &total, &enabled);
+
+    st =
+        g_mp->GetNumberOfProcessors(
+            g_mp,
+            &total,
+            &enabled
+        );
+
     if (EFI_ERROR(st) || total == 0)
         return false;
 
     if (total > MAX_CPUS)
         total = MAX_CPUS;
+
     g_cpu_count = total;
 
+    /*
+     * Allocate one private stack per CPU.
+     */
     for (UINTN i = 0; i < total; ++i) {
+
         void* stack = nullptr;
-        st = (EFI_STATUS)uefi_call_wrapper(
-            (void*)system_table->BootServices->AllocatePool,
-            3,
-            EfiLoaderData,
-            AP_STACK_SIZE,
-            &stack);
+
+        st =
+            (EFI_STATUS)uefi_call_wrapper(
+                (void*)system_table
+                    ->BootServices
+                    ->AllocatePool,
+                3,
+                EfiLoaderData,
+                AP_STACK_SIZE,
+                &stack
+            );
+
         if (EFI_ERROR(st) || !stack)
             return false;
+
         g_stacks[i] = stack;
     }
 
-    // Avoid blocking the BSP while APs enter their firmware callback.
-    st = (EFI_STATUS)uefi_call_wrapper(
-        (void*)system_table->BootServices->CreateEvent,
-        5,
-        EVT_NOTIFY_SIGNAL_VALUE,
-        TPL_NOTIFY_VALUE,
-        nullptr,
-        nullptr,
-        reinterpret_cast<EFI_EVENT*>(&g_startup_event));
+    /*
+     * Event used by EFI MP Services.
+     */
+    st =
+        (EFI_STATUS)uefi_call_wrapper(
+            (void*)system_table
+                ->BootServices
+                ->CreateEvent,
+            5,
+            EVT_NOTIFY_SIGNAL_VALUE,
+            TPL_NOTIFY_VALUE,
+            nullptr,
+            nullptr,
+            reinterpret_cast<EFI_EVENT*>(
+                &g_startup_event
+            )
+        );
+
     if (EFI_ERROR(st))
         return false;
 
     UINTN* failed = nullptr;
-    st = g_mp->StartupAllAPs(
-        g_mp,
-        ap_proc,
-        FALSE,
-        reinterpret_cast<EFI_EVENT>(g_startup_event),
-        0,
-        nullptr,
-        &failed);
+
+    st =
+        g_mp->StartupAllAPs(
+            g_mp,
+            ap_proc,
+            FALSE,
+            reinterpret_cast<EFI_EVENT>(
+                g_startup_event
+            ),
+            0,
+            nullptr,
+            &failed
+        );
+
     if (EFI_ERROR(st))
         return false;
 
-    // Wait briefly for every AP callback to reach the safe pre-EBS spin.
-    for (UINTN i = 0; i < 1000000 && __atomic_load_n(&g_started, __ATOMIC_ACQUIRE) + 1 < enabled; ++i)
+    /*
+     * Give APs some time to enter their callback and
+     * switch to their private BlockOS-owned stacks.
+     */
+    const UINTN target =
+        enabled > 0
+            ? enabled - 1
+            : 0;
+
+    for (
+        UINTN i = 0;
+        i < 1000000;
+        ++i
+    ) {
+        const UINT32 started =
+            __atomic_load_n(
+                &g_started,
+                __ATOMIC_ACQUIRE
+            );
+
+        if (started >= target)
+            break;
+
         __asm__ volatile("pause");
+    }
 
     g_system_table = system_table;
-    g_active = enabled > 1 && __atomic_load_n(&g_started, __ATOMIC_ACQUIRE) != 0;
+
+    const UINT32 started =
+        __atomic_load_n(
+            &g_started,
+            __ATOMIC_ACQUIRE
+        );
+
+    /*
+     * There is no point enabling the SMP layer if
+     * no AP actually started.
+     */
+    g_active =
+        enabled > 1 &&
+        started != 0;
+
     return g_active;
 }
 
@@ -173,17 +339,29 @@ void release_aps()
 {
     if (!g_active)
         return;
-    __atomic_store_n(&g_release, 1u, __ATOMIC_RELEASE);
+
+    __atomic_store_n(
+        &g_release,
+        1u,
+        __ATOMIC_RELEASE
+    );
 }
 
 size_t cpu_count()
 {
-    return g_cpu_count;
+    return static_cast<size_t>(
+        g_cpu_count
+    );
 }
 
 size_t started_count()
 {
-    return __atomic_load_n(&g_started, __ATOMIC_ACQUIRE);
+    return static_cast<size_t>(
+        __atomic_load_n(
+            &g_started,
+            __ATOMIC_ACQUIRE
+        )
+    );
 }
 
 bool active()
