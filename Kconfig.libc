@@ -1,0 +1,53 @@
+menu "C Library / userspace"
+
+config LIBC
+    bool "BlockOS libc"
+    default y
+
+config LIBC_STRING
+    bool "String functions"
+    default y
+    depends on LIBC
+
+config LIBC_MEMORY
+    bool "Memory functions"
+    default y
+    depends on LIBC
+
+config LIBC_STDIO
+    bool "stdio"
+    default y
+    depends on LIBC
+
+config LIBC_STDLIB
+    bool "stdlib"
+    default y
+    depends on LIBC
+
+config LIBC_UNISTD
+    bool "POSIX unistd"
+    default y
+    depends on LIBC
+
+config LIBC_PTHREAD
+    bool "pthread compatibility"
+    default n
+    depends on LIBC
+
+config LIBC_MATH
+    bool "Math library"
+    default y
+    depends on LIBC
+
+config USERSPACE_LDSO
+    bool "Dynamic loader (ld.so)"
+    default y
+    depends on ARCH_X86_64
+
+config USERSPACE_RING3_TESTS
+    bool "Ring3 userspace tests"
+    default y
+    depends on ARCH_X86_64 && KERNEL_USERMODE
+
+endmenu
+

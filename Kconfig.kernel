@@ -1,0 +1,40 @@
+menu "General kernel setup"
+
+config KERNEL_PREEMPT
+    bool "Preemptive scheduler"
+    default y
+
+config KERNEL_SMP
+    bool "SMP / multicore support"
+    default y
+    depends on ARCH_X86_64
+
+config KERNEL_USERMODE
+    bool "Ring3 / userspace support"
+    default y
+    depends on ARCH_X86_64
+
+config KERNEL_ELF
+    bool "ELF loader"
+    default y
+
+config KERNEL_SYSCALLS
+    bool "System call interface"
+    default y
+    depends on KERNEL_USERMODE
+
+config KERNEL_SANDBOX
+    bool "Process sandbox / isolation"
+    default y
+    depends on KERNEL_USERMODE
+
+config KERNEL_IO_URING
+    bool "io_uring support"
+    default y
+    depends on ARCH_X86_64
+
+config KERNEL_DEBUG
+    bool "Kernel debug diagnostics"
+    default y
+
+endmenu

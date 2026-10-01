@@ -1,34 +1,26 @@
 #include "esp32.hpp"
+#include "drivers/gpio.hpp"
+#include "drivers/uart.hpp"
 
 namespace esp32_arch {
 
-extern void arch_record_boot_stack(void* sp);
-
-extern "C" void blockos_arch_start_c(void* boot_stack)
+extern "C" void blockos_arch_start_c()
 {
-    /*
-     * Clear .bss before touching architecture-layer globals.
-     */
     memory_init();
-
-    arch_record_boot_stack(boot_stack);
-
-    /*
-     * The classic ESP32 can boot on the PRO CPU while the APP CPU is held
-     * in reset until the multicore startup path explicitly releases it.
-     * This initial architecture port therefore starts as a single-CPU
-     * target and leaves multicore startup for the ESP32 SMP layer.
-     */
     irq_disable();
-    timer_init(DEFAULT_CPU_HZ, 1000);
+    timer_init(DEFAULT_CPU_HZ, DEFAULT_TICK_HZ);
 
-    if (blockos_kernel_main) {
-        blockos_kernel_main();
-    }
+    esp32::uart::init(0, 115200);
+    esp32::gpio::reset_all();
 
-    for (;;) {
-        wait_for_interrupt();
-    }
+    esp32::uart::puts("\r\n");
+    esp32::uart::puts("BlockOS ESP32\r\n");
+    esp32::uart::puts("architecture: Xtensa LX6\r\n");
+    esp32::uart::puts("boot: ESP32 application image\r\n");
+    esp32::uart::puts("\r\n");
+
+    blockos_kernel_main();
+    wait_forever();
 }
 
 } // namespace esp32_arch

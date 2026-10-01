@@ -1,0 +1,36 @@
+choice
+    prompt "Target architecture"
+    default ARCH_X86_64
+
+config ARCH_X86_64
+    bool "x86-64"
+
+config ARCH_ESP32
+    bool "ESP32 (classic Xtensa LX6)"
+
+endchoice
+
+choice
+    prompt "x86-64 boot method"
+    default BOOT_UEFI
+    depends on ARCH_X86_64
+
+config BOOT_UEFI
+    bool "UEFI / GNU-EFI"
+
+config BOOT_GRUB
+    bool "GRUB / Multiboot2 (experimental)"
+    help
+      The Kconfig entry is reserved for the BlockOS GRUB/Multiboot2
+      boot path. The current production x86-64 build still uses GNU-EFI.
+
+endchoice
+
+menu "ESP32 platform"
+    depends on ARCH_ESP32
+
+config ESP32_CLASSIC
+    bool "Classic ESP32 support"
+    default y
+
+endmenu

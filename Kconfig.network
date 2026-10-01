@@ -1,0 +1,36 @@
+menu "Networking"
+
+config NET
+    bool "Networking support"
+    default y
+
+if NET
+
+config NET_IPV4
+    bool "IPv4"
+    default y
+
+config NET_TCP
+    bool "TCP"
+    default y
+
+config NET_UDP
+    bool "UDP"
+    default y
+
+config NET_DNS
+    bool "DNS"
+    default y
+
+config NET_DHCP
+    bool "DHCP"
+    default y
+
+config NET_SOCKETS
+    bool "Sockets"
+    default y
+
+endif
+
+endmenu
+

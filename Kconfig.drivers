@@ -1,0 +1,106 @@
+menu "Device Drivers"
+
+config DRIVERS
+    bool "Device driver support"
+    default y
+
+if DRIVERS
+
+config DRIVER_DEVICE_MANAGER
+    bool "Device manager"
+    default y
+
+config DRIVER_DMA
+    bool "DMA allocator"
+    default y
+
+config DRIVER_PCI
+    bool "PCI / PCIe"
+    default y
+    depends on ARCH_X86_64
+
+config DRIVER_ACPI
+    bool "ACPI"
+    default y
+    depends on ARCH_X86_64
+
+config DRIVER_ATA
+    bool "ATA PIO storage"
+    default y
+    depends on ARCH_X86_64
+
+config DRIVER_GRAPHICS_FB
+    bool "Framebuffer"
+    default y
+
+config DRIVER_GRAPHICS_AMD_DCN6
+    bool "AMD DCN6 display"
+    default y
+    depends on ARCH_X86_64
+
+config DRIVER_PS2
+    bool "PS/2 input"
+    default y
+    depends on ARCH_X86_64
+
+config DRIVER_USB
+    bool "USB subsystem"
+    default y
+    depends on ARCH_X86_64
+
+config DRIVER_USB_XHCI
+    bool "USB xHCI"
+    default y
+    depends on DRIVER_USB
+
+config DRIVER_USB_HID
+    bool "USB HID"
+    default y
+    depends on DRIVER_USB
+
+config DRIVER_USB_STORAGE
+    bool "USB storage"
+    default y
+    depends on DRIVER_USB
+
+config DRIVER_VIRTIO
+    bool "VirtIO core"
+    default y
+    depends on ARCH_X86_64
+
+config DRIVER_VIRTIO_BLOCK
+    bool "VirtIO block"
+    default y
+    depends on DRIVER_VIRTIO
+
+config DRIVER_VIRTIO_NET
+    bool "VirtIO network"
+    default y
+    depends on DRIVER_VIRTIO
+
+config DRIVER_VIRTIO_INPUT
+    bool "VirtIO input"
+    default y
+    depends on DRIVER_VIRTIO
+
+config DRIVER_NETWORK
+    bool "Network core"
+    default y
+
+config DRIVER_DHCP_DNS
+    bool "DHCP / DNS stack"
+    default y
+    depends on DRIVER_NETWORK
+
+config DRIVER_SOCKET
+    bool "Kernel socket support"
+    default y
+    depends on DRIVER_NETWORK
+
+config DRIVER_VM
+    bool "Virtual memory device support"
+    default y
+
+endif
+
+endmenu

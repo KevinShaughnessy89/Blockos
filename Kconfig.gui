@@ -1,0 +1,22 @@
+menu "Graphics / GUI"
+
+config GUI_FRAMEBUFFER
+    bool "Framebuffer GUI"
+    default y
+
+config GUI_X11
+    bool "BlockOS X11 server"
+    default y
+    depends on GUI_FRAMEBUFFER
+
+config GUI_WINDOW_MANAGER
+    bool "Window manager support"
+    default y
+    depends on GUI_X11
+
+config GUI_WINDOWMAKER
+    bool "Window Maker integration"
+    default y
+    depends on GUI_WINDOW_MANAGER
+
+endmenu

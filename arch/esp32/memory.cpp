@@ -14,18 +14,16 @@ void memory_init()
 {
     uint8_t* begin = &_bss_start;
     uint8_t* end = &_bss_end;
-
-    while (begin < end) {
+    while (begin < end)
         *begin++ = 0;
-    }
 }
 
-uintptr_t ram_begin()
+uintptr_t heap_begin()
 {
     return reinterpret_cast<uintptr_t>(&_heap_start);
 }
 
-uintptr_t ram_end()
+uintptr_t heap_end()
 {
     return reinterpret_cast<uintptr_t>(&_heap_end);
 }
