@@ -47,6 +47,7 @@ uint16_t checksum(const void* data, size_t len);
 
 void init();
 void poll();
+bool is_initialized();
 
 MacAddress mac_address();
 IPv4Address ip_address();
@@ -65,7 +66,3 @@ bool send_frame(const uint8_t dst[6],
 void input_frame(const void* frame, size_t len);
 
 } // namespace blockos::net
-
-namespace blockos::net {
-bool is_initialized();
-}

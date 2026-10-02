@@ -1,22 +1,8 @@
 #pragma once
-
-#include <cstddef>
-#include <cstdint>
-
+#include <stdint.h>
+#include <stddef.h>
 namespace nvme {
-
-bool init();
-bool is_ready();
-uint64_t capacity_sectors();
-uint32_t sector_size();
-
-bool read_sector(uint64_t lba, void* buffer);
-bool write_sector(uint64_t lba, const void* buffer);
-bool read_sectors(uint64_t lba, uint32_t count, void* buffer);
-bool write_sectors(uint64_t lba, uint32_t count, const void* buffer);
-bool flush();
-
-uint32_t controller_status();
-uint32_t controller_error_count();
-
-} // namespace nvme
+bool init(); bool available(); bool identify(uint8_t out_model[40], uint32_t& namespace_count);
+bool read(uint32_t nsid,uint64_t lba,uint16_t blocks,void* buffer,size_t block_size=512);
+bool write(uint32_t nsid,uint64_t lba,uint16_t blocks,const void* buffer,size_t block_size=512);
+}

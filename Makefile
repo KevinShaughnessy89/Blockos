@@ -19,19 +19,6 @@ OBJCOPY  := objcopy
 PYTHON   := python3
 
 # ============================================================
-# KCONFIG
-# ============================================================
-
-KCONFIG_MK      := include/generated/config.mk
-KCONFIG_FILES   := $(wildcard Kconfig Kconfig.*)
-KCONFIG_TOOL    := scripts/menuconfig.py
-
-# The generated config is included before source selection so the
-# configuration actually controls what is compiled.
--include $(KCONFIG_MK)
-
-
-# ============================================================
 # C++ FLAGS
 # ============================================================
 
@@ -61,6 +48,7 @@ CXXFLAGS := \
 	-Ifs \
 	-Iexamples \
 	-Ilibc/include \
+	-Iuserspace/libc/include \
 	-fvisibility=hidden \
 	-fno-strict-overflow \
 	-fno-delete-null-pointer-checks \
@@ -137,135 +125,11 @@ S_SRC_DIRS := \
 # ============================================================
 
 EXCLUDED_SRC := \
+	fs/EROFS.cpp \
+	fs/tmpfs.cpp \
 	kernel/login.cpp \
-	kernel/panic.cpp
-
-# Kconfig-selected source exclusions. Keep the historical defaults intact
-# while allowing individual subsystems to be turned off.
-ifeq ($(CONFIG_DRIVER_DEVICE_MANAGER),n)
-EXCLUDED_SRC += drivers/device_manager.cpp
-endif
-ifeq ($(CONFIG_DRIVER_DMA),n)
-EXCLUDED_SRC += drivers/dma.cpp
-endif
-ifeq ($(CONFIG_DRIVER_PCI),n)
-EXCLUDED_SRC += drivers/pci.cpp drivers/pci_config.cpp drivers/pci_msix.cpp drivers/pci_subsystem.cpp drivers/pcie.cpp
-endif
-ifeq ($(CONFIG_DRIVER_ACPI),n)
-EXCLUDED_SRC += drivers/acpi.cpp
-endif
-ifeq ($(CONFIG_DRIVER_ATA),n)
-EXCLUDED_SRC += drivers/ata_pio.cpp
-endif
-ifeq ($(CONFIG_DRIVER_GRAPHICS_FB),n)
-EXCLUDED_SRC += drivers/fb.cpp drivers/backbuffer.cpp
-endif
-ifeq ($(CONFIG_DRIVER_GRAPHICS_AMD_DCN6),n)
-EXCLUDED_SRC += drivers/amd_dcn6.cpp
-endif
-ifeq ($(CONFIG_DRIVER_PS2),n)
-EXCLUDED_SRC += drivers/ps2keyboard.cpp drivers/ps2mouse.cpp
-endif
-ifeq ($(CONFIG_DRIVER_USB),n)
-EXCLUDED_SRC += drivers/usb_hid.cpp drivers/usb_storage.cpp drivers/usb_xhci.cpp
-endif
-ifeq ($(CONFIG_DRIVER_USB_XHCI),n)
-EXCLUDED_SRC += drivers/usb_xhci.cpp
-endif
-ifeq ($(CONFIG_DRIVER_USB_HID),n)
-EXCLUDED_SRC += drivers/usb_hid.cpp
-endif
-ifeq ($(CONFIG_DRIVER_USB_STORAGE),n)
-EXCLUDED_SRC += drivers/usb_storage.cpp
-endif
-ifeq ($(CONFIG_DRIVER_VIRTIO),n)
-EXCLUDED_SRC += drivers/virtio_blk.cpp drivers/virtio_blk_full.cpp drivers/virtio_common.cpp drivers/virtio_common_features.cpp drivers/virtio_common_modern.cpp drivers/virtio_common_state.cpp drivers/virtio_input.cpp drivers/virtio_net_driver.cpp drivers/virtio_net_tx.cpp drivers/virtio_notify.cpp drivers/virtio_pci.cpp drivers/virtio_service.cpp drivers/virtqueue_ops.cpp
-endif
-ifeq ($(CONFIG_DRIVER_VIRTIO_BLOCK),n)
-EXCLUDED_SRC += drivers/virtio_blk.cpp drivers/virtio_blk_full.cpp
-endif
-ifeq ($(CONFIG_DRIVER_VIRTIO_NET),n)
-EXCLUDED_SRC += drivers/virtio_net_driver.cpp drivers/virtio_net_tx.cpp
-endif
-ifeq ($(CONFIG_DRIVER_VIRTIO_INPUT),n)
-EXCLUDED_SRC += drivers/virtio_input.cpp
-endif
-ifeq ($(CONFIG_DRIVER_NETWORK),n)
-EXCLUDED_SRC += drivers/network.cpp drivers/network_checksum_helper.cpp drivers/network_socket.cpp drivers/lwip_adapter.cpp
-endif
-ifeq ($(CONFIG_DRIVER_DHCP_DNS),n)
-EXCLUDED_SRC += drivers/dhcp_dns_stack.cpp
-endif
-ifeq ($(CONFIG_DRIVER_SOCKET),n)
-EXCLUDED_SRC += drivers/network_socket.cpp
-endif
-ifeq ($(CONFIG_DRIVER_VM),n)
-EXCLUDED_SRC += drivers/vm.cpp
-endif
-
-# Filesystem source selections. Core VFS plumbing is kept when FS_VFS=y.
-ifeq ($(CONFIG_FS_VFS),n)
-EXCLUDED_SRC += fs/vfs.cpp fs/vfs_blk_adapter.cpp fs/files.cpp fs/mount.cpp fs/system.cpp fs/autorun.cpp
-endif
-ifeq ($(CONFIG_FS_EXT2),n)
-EXCLUDED_SRC += fs/ext2.cpp
-endif
-ifeq ($(CONFIG_FS_EXT3),n)
-EXCLUDED_SRC += fs/ext3.cpp
-endif
-ifeq ($(CONFIG_FS_EXT4),n)
-EXCLUDED_SRC += fs/ext4.cpp
-endif
-ifeq ($(CONFIG_FS_FAT32),n)
-EXCLUDED_SRC += fs/fat32.cpp
-endif
-ifeq ($(CONFIG_FS_EXFAT),n)
-EXCLUDED_SRC += fs/extfat.cpp
-endif
-ifeq ($(CONFIG_FS_NTFS),n)
-EXCLUDED_SRC += fs/ntfs.cpp
-endif
-ifeq ($(CONFIG_FS_BTRFS),n)
-EXCLUDED_SRC += fs/btrfs.cpp
-endif
-ifeq ($(CONFIG_FS_JFS),n)
-EXCLUDED_SRC += fs/jfs.cpp
-endif
-ifeq ($(CONFIG_FS_ISO9660),n)
-EXCLUDED_SRC += fs/iso9660.cpp
-endif
-ifeq ($(CONFIG_FS_UDF),n)
-EXCLUDED_SRC += fs/udf.cpp
-endif
-ifeq ($(CONFIG_FS_UFS),n)
-EXCLUDED_SRC += fs/ufs.cpp
-endif
-ifeq ($(CONFIG_FS_UFS2),n)
-EXCLUDED_SRC += fs/ufs2.cpp
-endif
-ifeq ($(CONFIG_FS_RAMFS),n)
-EXCLUDED_SRC += fs/ramfs.cpp
-endif
-ifeq ($(CONFIG_FS_TMPFS),n)
-EXCLUDED_SRC += fs/tmpfs.cpp
-endif
-ifeq ($(CONFIG_FS_SQUASHFS),n)
-EXCLUDED_SRC += fs/sqashasfs.cpp
-endif
-ifeq ($(CONFIG_FS_EROFS),n)
-EXCLUDED_SRC += fs/EROFS.cpp
-endif
-ifeq ($(CONFIG_FS_LUA_ELF),n)
-EXCLUDED_SRC += fs/lua_elf.cpp
-endif
-ifeq ($(CONFIG_FS_PROC),n)
-EXCLUDED_SRC += fs/proc.cpp
-endif
-
-# libC/userspace selections.
-ifeq ($(CONFIG_LIBC),n)
-EXCLUDED_SRC += libc/src/*.cpp userspace/libc/*.cpp userspace/crt/*.S userspace/ldso/*.c userspace/ldso/*.S
-endif
+	kernel/panic.cpp \
+	fs/lua_elf.cpp
 
 # ============================================================
 # C++ SOURCES
@@ -309,7 +173,6 @@ BUILD_DIR := build
 
 SO_OUT  := $(BUILD_DIR)/kernel.so
 EFI_OUT := $(BUILD_DIR)/BOOTX64.EFI
-ESP32_BIN := $(BUILD_DIR)/esp32/blockos-esp32.bin
 
 # ============================================================
 # LUA
@@ -323,40 +186,7 @@ LUA_ELF    := $(LUA_DIR)/build/lua
 # DEFAULT
 # ============================================================
 
-all: $(KCONFIG_MK)
-ifeq ($(CONFIG_ARCH_ESP32),y)
-all: $(ESP32_BIN)
-else ifeq ($(CONFIG_BOOT_GRUB),y)
-all: grub-backend-not-ready
-else
 all: $(EFI_OUT)
-endif
-
-.PHONY: grub-backend-not-ready
-grub-backend-not-ready:
-	@echo "[ERROR] GRUB/Multiboot2 is selected in Kconfig, but the BlockOS GRUB backend is not implemented yet."
-	@echo "[ERROR] Select UEFI / GNU-EFI to build the current x86-64 image."
-	exit 2
-
-# ============================================================
-# KCONFIG GENERATION
-# ============================================================
-
-.PHONY: kconfig defconfig oldconfig
-
-kconfig: menuconfig
-
-defconfig: $(KCONFIG_FILES) $(KCONFIG_TOOL)
-	@mkdir -p include/generated
-	$(PYTHON) $(KCONFIG_TOOL) --defconfig
-
-oldconfig: $(KCONFIG_FILES) $(KCONFIG_TOOL)
-	@mkdir -p include/generated
-	$(PYTHON) $(KCONFIG_TOOL) --oldconfig
-
-$(KCONFIG_MK): $(KCONFIG_FILES) $(KCONFIG_TOOL)
-	@mkdir -p include/generated
-	$(PYTHON) $(KCONFIG_TOOL) --sync
 
 # ============================================================
 # FULL STACK
@@ -365,24 +195,6 @@ $(KCONFIG_MK): $(KCONFIG_FILES) $(KCONFIG_TOOL)
 .PHONY: full-stack
 
 full-stack: host-all windowmaker install-windowmaker-rootfs rootfs-windowmaker-check $(EFI_OUT)
-
-# ============================================================
-# ESP32 BUILD
-# ============================================================
-
-ifeq ($(CONFIG_ARCH_ESP32),y)
-
-$(ESP32_BIN): $(KCONFIG_MK) arch/esp32/Makefile
-	@echo "[BLOCKOS] Building ESP32 image from Kconfig"
-	$(MAKE) -f arch/esp32/Makefile all
-
-.PHONY: esp32 esp32-image esp32-flash
-esp32 esp32-image: $(ESP32_BIN)
-
-esp32-flash: $(ESP32_BIN)
-	$(MAKE) -f arch/esp32/Makefile flash
-
-endif
 
 # ============================================================
 # C++ COMPILATION

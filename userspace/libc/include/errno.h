@@ -34,3 +34,5 @@ extern _Thread_local int errno;
 #define EPIPE   32
 #define ERANGE  34
 #define ENOSYS  38
+#define ENOTSOCK 88
+#define EHOSTUNREACH 113

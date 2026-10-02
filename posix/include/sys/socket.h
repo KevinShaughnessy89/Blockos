@@ -7,6 +7,13 @@ struct sockaddr_storage { unsigned short ss_family; char __data[126]; };
 #define AF_UNIX 1
 #define AF_INET 2
 #define AF_INET6 10
+#define IPPROTO_IP 0
+#define IPPROTO_TCP 6
+#define IPPROTO_UDP 17
+struct in_addr { unsigned int s_addr; };
+struct sockaddr_in { unsigned short sin_family; unsigned short sin_port; struct in_addr sin_addr; unsigned char sin_zero[8]; };
+struct in6_addr { unsigned char s6_addr[16]; };
+struct sockaddr_in6 { unsigned short sin6_family; unsigned short sin6_port; unsigned int sin6_flowinfo; struct in6_addr sin6_addr; unsigned int sin6_scope_id; };
 #define SOCK_STREAM 1
 #define SOCK_DGRAM 2
 #define SOCK_RAW 3
