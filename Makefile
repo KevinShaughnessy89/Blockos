@@ -482,6 +482,7 @@ browser-source-check:
 tls-backend-check:
 	test -f ports/tls/mbedtls_adapter.hpp
 	test -f ports/tls/mbedtls_adapter.cpp
+	test -f ports/tls/mbedtls_adapter.hpp
 	test -f ports/tls/README.md
 	@echo "[OK] TLS backend integration point present"
 

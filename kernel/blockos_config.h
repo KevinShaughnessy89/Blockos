@@ -37,3 +37,7 @@
 #define CONFIG_HTTPS 1
 
 #endif
+
+#define CONFIG_WIFI_PCI 1
+#define CONFIG_TLS_MBEDTLS 1
+#define CONFIG_TLS_CERT_VERIFY 1
