@@ -699,6 +699,33 @@ bool remove_file(const char* path)
     return false;
 }
 
+bool remove_directory(const char* path)
+{
+    if (!path) return false;
+    char normalized[VFS_MAX_PATH];
+    if (!normalize_path(path, normalized, sizeof(normalized))) return false;
+    if (string_equal(normalized, "/")) return false;
+    vfs_entry* target = find_entry(normalized);
+    if (!target || target->type != NODE_DIRECTORY) return false;
+    size_t n = string_length(normalized);
+    for (vfs_entry* e = vfs_root; e; e = e->next) {
+        if (!e->name || e == target) continue;
+        if (strncmp(e->name, normalized, n) == 0 && e->name[n] == '/') return false;
+    }
+    vfs_entry* cur = vfs_root;
+    vfs_entry* prev = nullptr;
+    while (cur) {
+        if (cur == target) {
+            if (prev) prev->next = cur->next; else vfs_root = cur->next;
+            free_entry(cur);
+            return true;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+    return false;
+}
+
 bool rename_path(const char* old_path, const char* new_path)
 {
     if (!old_path || !new_path) return false;

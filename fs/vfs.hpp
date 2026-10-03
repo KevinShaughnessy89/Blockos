@@ -63,6 +63,7 @@ bool create_directory(const char* path);
 size_t directory_entry_count(const char* directory);
 const char* directory_entry_name(const char* directory, size_t index);
 bool remove_file(const char* path);
+bool remove_directory(const char* path);
 bool rename_path(const char* old_path, const char* new_path);
 
 bool create_device_node(

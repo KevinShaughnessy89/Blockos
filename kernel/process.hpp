@@ -12,11 +12,12 @@ struct RuntimeFd {
     enum Kind : uint8_t { None = 0, Tty, File, Directory, Device, UnixSocket };
     bool used;
     Kind kind;
-    uint16_t flags;
+    uint32_t flags;
     uint32_t object;
     const uint8_t* data;
     uint64_t size;
     uint64_t off;
+    const char* path;
 };
 
 constexpr size_t MAX_RUNTIME_FDS = 128;
