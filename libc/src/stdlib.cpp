@@ -1,3 +1,4 @@
+
 #include "../include/stdlib.h"
 #include "../include/string.h"
 
@@ -130,20 +131,24 @@ static void qsort_impl(
     ::free(pivot);
 
     if (left < j)
+    {
         qsort_impl(
             base,
             left,
             j,
             element_size,
             compare);
+    }
 
     if (i < right)
+    {
         qsort_impl(
             base,
             i,
             right,
             element_size,
             compare);
+    }
 }
 
 }
@@ -341,14 +346,20 @@ long atol(const char* s)
 }
 
 
-unsigned long strtoul(const char* s, char** endptr, int base)
+unsigned long strtoul(
+    const char* s,
+    char** endptr,
+    int base)
 {
     const char* start = s;
 
     if (endptr)
         *endptr = (char*) start;
 
-    if (!s || base < 0 || base == 1 || base > 36)
+    if (!s)
+        return 0;
+
+    if (base < 0 || base == 1 || base > 36)
         return 0;
 
     while (*s == ' ' ||
@@ -373,58 +384,140 @@ unsigned long strtoul(const char* s, char** endptr, int base)
         ++s;
     }
 
-    if ((base == 0 || base == 16) &&
-        s[0] == '0' &&
-        (s[1] == 'x' || s[1] == 'X'))
+    /*
+     * Compute ULONG_MAX without depending on the host
+     * <limits.h>. This is important for the BlockOS libc
+     * cross-build environment.
+     */
+    const unsigned long ulong_max =
+        static_cast<unsigned long>(~0UL);
+
+    if (base == 0)
     {
-        base = 16;
-        s += 2;
+        if (s[0] == '0')
+        {
+            if (s[1] == 'x' || s[1] == 'X')
+            {
+                /*
+                 * Only consume 0x/0X as a hexadecimal prefix
+                 * when it is actually followed by a valid hex digit.
+                 */
+                const char next = s[2];
+
+                bool valid_hex =
+                    (next >= '0' && next <= '9') ||
+                    (next >= 'a' && next <= 'f') ||
+                    (next >= 'A' && next <= 'F');
+
+                if (valid_hex)
+                {
+                    base = 16;
+                    s += 2;
+                }
+                else
+                {
+                    base = 8;
+                }
+            }
+            else
+            {
+                base = 8;
+            }
+        }
+        else
+        {
+            base = 10;
+        }
     }
-    else if (base == 0 && s[0] == '0')
+    else if (base == 16)
     {
-        base = 8;
-        ++s;
-    }
-    else if (base == 0)
-    {
-        base = 10;
+        if (s[0] == '0' &&
+            (s[1] == 'x' || s[1] == 'X'))
+        {
+            const char next = s[2];
+
+            bool valid_hex =
+                (next >= '0' && next <= '9') ||
+                (next >= 'a' && next <= 'f') ||
+                (next >= 'A' && next <= 'F');
+
+            if (valid_hex)
+                s += 2;
+        }
     }
 
     unsigned long result = 0;
     bool any = false;
     bool overflow = false;
 
+    const unsigned long ub =
+        static_cast<unsigned long>(base);
+
+    const unsigned long limit =
+        ulong_max / ub;
+
+    const unsigned long remainder =
+        ulong_max % ub;
+
     for (;; ++s)
     {
         unsigned long digit;
 
         if (*s >= '0' && *s <= '9')
-            digit = (unsigned long) (*s - '0');
+        {
+            digit =
+                static_cast<unsigned long>(
+                    *s - '0');
+        }
         else if (*s >= 'a' && *s <= 'z')
-            digit = (unsigned long) (*s - 'a') + 10;
+        {
+            digit =
+                static_cast<unsigned long>(
+                    *s - 'a') + 10UL;
+        }
         else if (*s >= 'A' && *s <= 'Z')
-            digit = (unsigned long) (*s - 'A') + 10;
+        {
+            digit =
+                static_cast<unsigned long>(
+                    *s - 'A') + 10UL;
+        }
         else
+        {
+            break;
+        }
+
+        if (digit >= ub)
             break;
 
-        if (digit >= (unsigned long) base)
-            break;
+        /*
+         * Check overflow BEFORE performing:
+         *
+         *   result * base + digit
+         *
+         * so unsigned wraparound cannot hide the overflow.
+         */
+        if (!overflow)
+        {
+            if (result > limit ||
+                (result == limit &&
+                 digit > remainder))
+            {
+                overflow = true;
+            }
+            else
+            {
+                result =
+                    result * ub + digit;
+            }
+        }
 
-        const unsigned long limit = ULONG_MAX / (unsigned long) base;
-
-        if (result > limit)
-            overflow = true;
-
-        result = result * (unsigned long) base;
-
-        if (result > ULONG_MAX - digit)
-            overflow = true;
-
-        result += digit;
         any = true;
     }
 
-    // No digits converted: endptr stays at the original string, per the standard
+    /*
+     * No digits converted:
+     * endptr remains at the original string.
+     */
     if (!any)
         return 0;
 
@@ -432,9 +525,13 @@ unsigned long strtoul(const char* s, char** endptr, int base)
         *endptr = (char*) s;
 
     if (overflow)
-        return ULONG_MAX;
+        return ulong_max;
 
-    return negate ? (unsigned long) (0 - result) : result;
+    if (negate)
+        return static_cast<unsigned long>(
+            0UL - result);
+
+    return result;
 }
 
 
@@ -468,51 +565,7 @@ int rand(void)
         0x7fffffffU);
 }
 
-
-void qsort(
-    void* base,
-    size_t count,
-    size_t size,
-    int (*compare)(const void*, const void*))
-{
-    if (!base ||
-        count < 2 ||
-        size == 0 ||
-        !compare)
-    {
-        return;
-    }
-
-    qsort_impl(
-        static_cast<unsigned char*>(base),
-        0,
-        count - 1,
-        size,
-        compare);
 }
 
 
-extern "C" void blockos_process_exit(int status)
-    __attribute__((weak));
-
-
-[[noreturn]]
-void exit(int status)
-{
-    if (blockos_process_exit)
-        blockos_process_exit(status);
-
-    (void)status;
-
-    for (;;)
-    {
-#if defined(__x86_64__)
-        asm volatile("cli");
-        asm volatile("hlt");
-#else
-        asm volatile("");
-#endif
-    }
-}
-
-}
+Ha a következő hibánál megáll, küldd be azt a hibát, és ugyanígy javítjuk tovább.
