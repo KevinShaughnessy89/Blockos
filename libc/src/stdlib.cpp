@@ -566,6 +566,3 @@ int rand(void)
 }
 
 }
-
-
-Ha a következő hibánál megáll, küldd be azt a hibát, és ugyanígy javítjuk tovább.
