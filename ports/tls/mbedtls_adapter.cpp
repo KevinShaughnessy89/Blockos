@@ -18,6 +18,7 @@
 #include "blockos_tls_client.h"
 #include <errno.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,7 +45,7 @@ struct MbedTlsState {
     size_t ca_len;
 };
 
-static char g_ca_file[256] = "/etc/ssl/certs/ca-certificates.crt";
+static char g_ca_file[256] = "/System/etc/ssl/certs/ca-certificates.crt";
 static bool g_installed = false;
 
 static int bio_send(void* ctx, const unsigned char* buf, size_t len) {
