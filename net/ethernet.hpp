@@ -7,6 +7,7 @@ namespace blockos::net {
 
 constexpr uint16_t ETHERTYPE_IPV4 = 0x0800;
 constexpr uint16_t ETHERTYPE_ARP  = 0x0806;
+constexpr uint16_t ETHERTYPE_IPV6 = 0x86DD;
 
 struct EthernetHeader {
     uint8_t dst[6];

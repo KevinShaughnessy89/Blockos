@@ -1,203 +1,24 @@
 #include "dns.hpp"
 #include "dhcp.hpp"
 #include "udp.hpp"
-#include "net.hpp"
 #include <string.h>
-
 namespace blockos::net::dns {
 namespace {
-
-static uint32_t g_server = 0;
-static uint16_t g_id = 0x5101;
-static volatile bool g_done = false;
-static volatile uint32_t g_answer = 0;
-static volatile uint8_t g_rcode = 0;
-static bool g_bound = false;
-
-static uint16_t rd16(const uint8_t* p) {
-    return uint16_t((uint16_t(p[0]) << 8) | p[1]);
+uint32_t g_server=0;IPv6Address g_server6{};uint16_t g_id=0x5101;DnsResult* g_out=nullptr;uint16_t g_expect=0;bool g_done=false;
+static uint16_t rd16(const uint8_t*p){return uint16_t(p[0]<<8|p[1]);}static uint32_t rd32(const uint8_t*p){return (uint32_t(p[0])<<24)|(uint32_t(p[1])<<16)|(uint32_t(p[2])<<8)|p[3];}
+static bool decode_name(const uint8_t*msg,size_t len,size_t off,char*out,size_t cap,size_t&next){size_t pos=off,w=0,jumps=0;bool jumped=false;next=off;while(pos<len&&jumps++<32){uint8_t c=msg[pos];if(c==0){if(!jumped)next=pos+1; if(w>=cap)return false;if(w)out[w-1]=0;else out[0]=0;return true;}if((c&0xc0)==0xc0){if(pos+1>=len)return false;uint16_t ptr=uint16_t(((c&0x3f)<<8)|msg[pos+1]);if(!jumped)next=pos+2;jumped=true;pos=ptr;continue;}if(c>63||pos+1+c>len)return false;if(w+c+1>=cap)return false;memcpy(out+w,msg+pos+1,c);w+=c;out[w++]='.';pos+=c+1;}return false;}
+static bool parse(const uint8_t*p,size_t len,DnsResult&out){if(len<12)return false;uint16_t flags=rd16(p+2);if(!(flags&0x8000)||((flags>>11)&15)!=0)return false;uint16_t q=rd16(p+4),a=rd16(p+6);if(!q)return false;size_t i=12;char tmp[256];size_t next=0;if(!decode_name(p,len,i,tmp,sizeof(tmp),next))return false;if(next+4>len)return false;i=next+4;out.count=0;for(uint16_t n=0;n<a&&out.count<8;n++){if(!decode_name(p,len,i,tmp,sizeof(tmp),next))return false;i=next;if(i+10>len)return false;uint16_t type=rd16(p+i),cls=rd16(p+i+2);uint32_t ttl=rd32(p+i+4);uint16_t rdlen=rd16(p+i+8);i+=10;if(i+rdlen>len)return false;DnsRecord&r=out.records[out.count];memset(&r,0,sizeof(r));r.type=(RecordType)type;r.ttl=ttl;if(cls!=1){i+=rdlen;continue;}if(type==A&&rdlen==4){memcpy(r.a.b,p+i,4);out.count++;}else if(type==AAAA&&rdlen==16){memcpy(r.aaaa.b,p+i,16);out.count++;}else if(type==CNAME||type==MX){size_t nn=i;if(type==MX){if(rdlen<3){i+=rdlen;continue;}r.mx_priority=rd16(p+i);nn=i+2;}if(!decode_name(p,len,nn,r.name,sizeof(r.name),next)){i+=rdlen;continue;}out.count++;}else if(type==TXT){size_t pos=i,end=i+rdlen,w=0;while(pos<end&&w+1<sizeof(r.text)){uint8_t n=p[pos++];if(pos+n>end)break;if(w&&w+1<sizeof(r.text))r.text[w++]=' ';size_t take=n;if(take>sizeof(r.text)-w-1)take=sizeof(r.text)-w-1;memcpy(r.text+w,p+pos,take);w+=take;pos+=n;}r.text[w]=0;out.count++;}i+=rdlen;}
+return out.count>0;}
+static void rx4(const UdpDatagram&d){if(d.dst_port!=5300||d.length<2)return;if(rd16(d.data)!=g_id)return;if(g_out&&parse(d.data,d.length,*g_out))g_done=true;}
+static void rx6(const UdpDatagram6&d){if(d.dst_port!=5300||d.length<2)return;if(rd16(d.data)!=g_id)return;if(g_out&&parse(d.data,d.length,*g_out))g_done=true;}
+static size_t encode_q(uint8_t*p,size_t cap,const char*name,uint16_t type){size_t pos=0,start=0,n=strlen(name);if(n>=240)return 0;for(size_t i=0;i<=n;i++)if(name[i]=='.'||name[i]==0){size_t l=i-start;if(!l||l>63||pos+l+1>=cap)return 0;p[pos++]=(uint8_t)l;memcpy(p+pos,name+start,l);pos+=l;start=i+1;}p[pos++]=0;p[pos++]=uint8_t(type>>8);p[pos++]=uint8_t(type);p[pos++]=0;p[pos++]=1;return pos;}
 }
-
-static uint32_t rd32(const uint8_t* p) {
-    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
-           (uint32_t(p[2]) << 8) | uint32_t(p[3]);
+void set_server(uint32_t ip){g_server=ip;}
+void set_server6(const IPv6Address&ip){g_server6=ip;}
+bool query(const char*name,RecordType type,DnsResult&out,uint32_t loops){if(!name||!name[0])return false;if(!g_server&&!g_server6.b[0]){auto l=dhcp::lease();g_server=l.dns?l.dns:0x08080808u;}static bool bound=false;if(!bound){if(!udp_bind(5300,rx4))return false;if(!udp6_bind(5300,rx6))return false;bound=true;}uint8_t p[512]{};g_id++;p[0]=uint8_t(g_id>>8);p[1]=uint8_t(g_id);p[2]=1;p[5]=1;size_t pos=encode_q(p+12,sizeof(p)-12,name,type);if(!pos)return false;pos+=12;memset(&out,0,sizeof(out));g_out=&out;g_done=false;if(g_server){IPv4Address dst{{uint8_t(g_server>>24),uint8_t(g_server>>16),uint8_t(g_server>>8),uint8_t(g_server)}};if(!udp_send(dst,5300,53,p,pos))return false;}else{if(!udp6_send(g_server6,5300,53,p,pos))return false;}for(uint32_t i=0;i<loops&&!g_done;i++){}g_out=nullptr;return g_done;}
+bool resolve_a(const char*n,uint32_t&o,uint32_t l){DnsResult r{};if(!query(n,A,r,l))return false;for(uint16_t i=0;i<r.count;i++)if(r.records[i].type==A){o=(uint32_t(r.records[i].a.b[0])<<24)|(uint32_t(r.records[i].a.b[1])<<16)|(uint32_t(r.records[i].a.b[2])<<8)|r.records[i].a.b[3];return true;}return false;}
+bool resolve_aaaa(const char*n,IPv6Address&o,uint32_t l){DnsResult r{};if(!query(n,AAAA,r,l))return false;for(uint16_t i=0;i<r.count;i++)if(r.records[i].type==AAAA){o=r.records[i].aaaa;return true;}return false;}
+bool resolve_cname(const char*n,char*o,size_t z,uint32_t l){if(!o||!z)return false;DnsResult r{};if(!query(n,CNAME,r,l))return false;for(uint16_t i=0;i<r.count;i++)if(r.records[i].type==CNAME){strncpy(o,r.records[i].name,z-1);o[z-1]=0;return true;}return false;}
+bool resolve_mx(const char*n,uint16_t&p,char*o,size_t z,uint32_t l){if(!o||!z)return false;DnsResult r{};if(!query(n,MX,r,l))return false;for(uint16_t i=0;i<r.count;i++)if(r.records[i].type==MX){p=r.records[i].mx_priority;strncpy(o,r.records[i].name,z-1);o[z-1]=0;return true;}return false;}
+bool resolve_txt(const char*n,char*o,size_t z,uint32_t l){if(!o||!z)return false;DnsResult r{};if(!query(n,TXT,r,l))return false;for(uint16_t i=0;i<r.count;i++)if(r.records[i].type==TXT){strncpy(o,r.records[i].text,z-1);o[z-1]=0;return true;}return false;}
 }
-
-static bool skip_name(const uint8_t* p, size_t len, size_t& pos) {
-    size_t hops = 0;
-    while (pos < len) {
-        const uint8_t c = p[pos++];
-        if (c == 0) return true;
-        if ((c & 0xC0) == 0xC0) {
-            if (pos >= len) return false;
-            ++pos;
-            return true;
-        }
-        if (c > 63 || pos + c > len) return false;
-        pos += c;
-        if (++hops > 128) return false;
-    }
-    return false;
-}
-
-static bool encode_name(const char* name, uint8_t* out, size_t cap, size_t& used) {
-    used = 0;
-    if (!name || !*name) return false;
-
-    size_t start = 0;
-    const size_t len = strlen(name);
-    if (len > 253) return false;
-
-    while (start < len) {
-        size_t end = start;
-        while (end < len && name[end] != '.') ++end;
-        const size_t n = end - start;
-        if (!n || n > 63 || used + 1 + n >= cap) return false;
-        out[used++] = uint8_t(n);
-        memcpy(out + used, name + start, n);
-        used += n;
-        start = (end < len) ? end + 1 : end;
-    }
-    if (used + 1 > cap) return false;
-    out[used++] = 0;
-    return true;
-}
-
-static void rx(const UdpDatagram& d) {
-    if (d.dst_port != 5300 || !d.data || d.length < 12) return;
-
-    const uint8_t* p = d.data;
-    const uint16_t id = rd16(p + 0);
-    const uint16_t flags = rd16(p + 2);
-    if (id != g_id || !(flags & 0x8000)) return;   // response only
-
-    g_rcode = uint8_t(flags & 0x000F);
-    if (g_rcode != 0) {
-        g_done = true;
-        return;
-    }
-
-    const uint16_t qd = rd16(p + 4);
-    const uint16_t an = rd16(p + 6);
-    const uint16_t ns = rd16(p + 8);
-    const uint16_t ar = rd16(p + 10);
-    (void)ar;
-    if (!qd) return;
-
-    size_t pos = 12;
-    for (uint16_t i = 0; i < qd; ++i) {
-        if (!skip_name(p, d.length, pos) || pos + 4 > d.length) return;
-        pos += 4;
-    }
-
-    for (uint16_t i = 0; i < an; ++i) {
-        if (!skip_name(p, d.length, pos) || pos + 10 > d.length) return;
-        const uint16_t type = rd16(p + pos + 0);
-        const uint16_t cls = rd16(p + pos + 2);
-        const uint16_t rdlen = rd16(p + pos + 8);
-        pos += 10;
-        if (pos + rdlen > d.length) return;
-
-        if (type == 1 && cls == 1 && rdlen == 4) {
-            g_answer = rd32(p + pos);
-            g_done = true;
-            return;
-        }
-        pos += rdlen;
-    }
-
-    // A valid reply with no A answer is still terminal for this simple A resolver.
-    (void)ns;
-    g_done = true;
-}
-
-static uint32_t choose_server() {
-    if (g_server) return g_server;
-    const auto lease = dhcp::lease();
-    if (lease.valid && lease.dns) return lease.dns;
-    // Public fallback. DHCP still wins when available.
-    return 0x01010101u; // 1.1.1.1
-}
-
-} // namespace
-
-void set_server(uint32_t ip) {
-    g_server = ip;
-}
-
-uint32_t server() {
-    return choose_server();
-}
-
-bool resolve_a(const char* name, uint32_t& out, uint32_t loops) {
-    if (!name || !*name || !is_initialized()) return false;
-
-    // Fast path for numeric IPv4 literals.
-    uint32_t literal = 0;
-    size_t parts = 0;
-    size_t value = 0;
-    bool valid_literal = true;
-    for (size_t i = 0;; ++i) {
-        const char c = name[i];
-        if (c >= '0' && c <= '9') {
-            value = value * 10u + uint32_t(c - '0');
-            if (value > 255) { valid_literal = false; break; }
-        } else if (c == '.' || c == '\0') {
-            if (parts >= 4) { valid_literal = false; break; }
-            literal = (literal << 8) | uint32_t(value);
-            ++parts;
-            value = 0;
-            if (c == '\0') break;
-        } else {
-            valid_literal = false;
-            break;
-        }
-    }
-    if (valid_literal && parts == 4) {
-        out = literal;
-        return true;
-    }
-
-    if (!g_bound) {
-        if (!udp_bind(5300, rx)) return false;
-        g_bound = true;
-    }
-
-    uint8_t packet[512]{};
-    ++g_id;
-    if (!g_id) ++g_id;
-    packet[0] = uint8_t(g_id >> 8);
-    packet[1] = uint8_t(g_id);
-    packet[2] = 0x01; // RD: recursion desired
-    packet[5] = 0x01; // QDCOUNT = 1
-
-    size_t pos = 12;
-    size_t encoded = 0;
-    if (!encode_name(name, packet + pos, sizeof(packet) - pos, encoded)) return false;
-    pos += encoded;
-    if (pos + 4 > sizeof(packet)) return false;
-    packet[pos++] = 0;
-    packet[pos++] = 1; // QTYPE A
-    packet[pos++] = 0;
-    packet[pos++] = 1; // QCLASS IN
-
-    const uint32_t s = choose_server();
-    const IPv4Address dst{{uint8_t(s >> 24), uint8_t(s >> 16),
-                           uint8_t(s >> 8), uint8_t(s)}};
-
-    g_done = false;
-    g_answer = 0;
-    g_rcode = 0;
-    if (!udp_send(dst, 5300, 53, packet, pos)) return false;
-
-    for (uint32_t i = 0; i < loops && !g_done; ++i) {
-        poll();
-        if ((i & 0x3FFu) == 0) __asm__ volatile("pause");
-    }
-
-    if (!g_done || g_rcode != 0 || !g_answer) return false;
-    out = g_answer;
-    return true;
-}
-
-} // namespace blockos::net::dns

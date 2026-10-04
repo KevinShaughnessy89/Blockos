@@ -246,16 +246,17 @@ void rx_reset_if_empty(Conn& c) {
 bool rx_push(Conn& c,
              const uint8_t* data,
              size_t len) {
-    if (!data || !len)
-        return true;
-
-    if (rx_free_space(c) < len)
-        return false;
-
+    if (!data || !len) return true;
+    if (rx_free_space(c) < len) return false;
+    if (c.rx_tail + len > RX_BUFFER_SIZE) {
+        const size_t used = rx_available(c);
+        if (used) memmove(c.rx, c.rx + c.rx_head, used);
+        c.rx_head = 0;
+        c.rx_tail = used;
+        if (c.rx_tail + len > RX_BUFFER_SIZE) return false;
+    }
     memcpy(c.rx + c.rx_tail, data, len);
-
     c.rx_tail += len;
-
     return true;
 }
 

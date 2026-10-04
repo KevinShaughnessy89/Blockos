@@ -18,7 +18,6 @@
 #include "blockos_tls_client.h"
 #include <errno.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,6 +70,7 @@ static int bio_recv(void* ctx, unsigned char* buf, size_t len) {
 
 static int read_ca_file(MbedTlsState* s) {
     FILE* f = fopen(g_ca_file, "rb");
+    if (!f) f = fopen("/etc/ssl/certs/ca-certificates.crt", "rb");
     if (!f) return -1;
 
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }

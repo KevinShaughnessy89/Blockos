@@ -1,11 +1,11 @@
 #include "preempt.hpp"
+#include "net/ntp.hpp"
 #include "syscall/syscall_numbers.hpp"
 #include "process.hpp"
 #include "arch/86_64x/paging.hpp"
 #include "vfs.hpp"
 #include "elf_loader.hpp"
 #include "input_bridge.hpp"
-#include "allocator.hpp"
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
@@ -18,7 +18,7 @@ extern "C" void blockos_user_return();
 extern "C" uint64_t blockos_user_saved_rsp;
 
 namespace {
-constexpr int64_t EPERM=-1,EINTR=-4,EIO=-5,EBADF=-9,EAGAIN=-11,EMFILE=-24,EFAULT=-14,EINVAL=-22,ENOSYS=-38,ENOTCONN=-107,EADDRINUSE=-98,ENOENT=-2,ENOTSOCK=-88,EMSGSIZE=-90,ENOMEM=-12,ESPIPE=-29,ECHILD=-10,EEXIST=-17,ENOTDIR=-20,EISDIR=-21,ENAMETOOLONG=-36,ENOSPC=-28,ENOTEMPTY=-39,ENOTTY=-25;
+constexpr int64_t EPERM=-1,EINTR=-4,EBADF=-9,EAGAIN=-11,EMFILE=-24,EFAULT=-14,EINVAL=-22,ENOSYS=-38,ENOTCONN=-107,EADDRINUSE=-98,ENOENT=-2,ENOTSOCK=-88,EMSGSIZE=-90,ENOMEM=-12,ESPIPE=-29,ECHILD=-10,EEXIST=-17,ENOTDIR=-20,EISDIR=-21,ENAMETOOLONG=-36,ENOSPC=-28,ENOTEMPTY=-39,ENOTTY=-25;
 constexpr uint64_t PAGE=0x1000;
 constexpr uint64_t MAP_ANONYMOUS=0x20;
 constexpr uint64_t MAP_FIXED=0x10;
@@ -51,12 +51,12 @@ struct UnixSocket {
     uint32_t rx_size;
 };
 static UnixSocket unix_socks[256];
-static char runtime_paths[256][256];
-static uint8_t runtime_path_used[256];
+static char directory_paths[128][256];
+static uint8_t directory_path_used[128];
 static vfs::DeviceNodeInfo device_infos[64];
 static uint8_t device_info_used[64];
 static const vfs::DeviceNodeInfo* store_device_info(const vfs::DeviceNodeInfo& in){for(size_t i=0;i<64;i++)if(!device_info_used[i]){device_info_used[i]=1;device_infos[i]=in;return &device_infos[i];}return nullptr;}
-static const char* store_runtime_path(const char* path){for(size_t i=0;i<256;i++)if(!runtime_path_used[i]){runtime_path_used[i]=1;strncpy(runtime_paths[i],path,255);runtime_paths[i][255]=0;return runtime_paths[i];}return nullptr;}
+static const char* store_directory_path(const char* path){for(size_t i=0;i<128;i++)if(!directory_path_used[i]){directory_path_used[i]=1;strncpy(directory_paths[i],path,255);directory_paths[i][255]=0;return directory_paths[i];}return nullptr;}
 
 struct FutexWaiter { bool used; uint64_t addr; uint64_t pid; };
 static FutexWaiter futex_waiters[128];
@@ -94,10 +94,10 @@ static process::RuntimeFd* fdtable(){
     return p ? p->fds : nullptr;
 }
 
-static int alloc_fd(uint32_t start=3){
+static int alloc_fd(uint16_t start=3){
     auto* fs=fdtable(); if(!fs) return -1;
     for(int i=start;i<(int)process::MAX_RUNTIME_FDS;i++) if(!fs[i].used){
-        fs[i]={true,process::RuntimeFd::None,0,0,nullptr,0,0,nullptr}; return i;
+        fs[i]={true,process::RuntimeFd::None,0,0,nullptr,0,0}; return i;
     }
     return -1;
 }
@@ -274,19 +274,6 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
         auto& d=fs[f->rdi];
         if(d.kind==process::RuntimeFd::Tty) r=blockos_tty_write((const void*)(uintptr_t)f->rsi,(size_t)f->rdx);
         else if(d.kind==process::RuntimeFd::UnixSocket){int si=fd_socket_index((int)f->rdi);if(si<0){r=ENOTCONN;break;} if(!socket_write_idx(si,(const uint8_t*)(uintptr_t)f->rsi,(size_t)f->rdx))r=EAGAIN;else r=(int64_t)f->rdx;}
-        else if(d.kind==process::RuntimeFd::File){
-            if((d.flags&3u)==0||!d.path){r=EBADF;break;}
-            uint32_t oldsz=0;const uint8_t* old=vfs::read_file(d.path,&oldsz);
-            uint64_t start=(d.flags&02000u)?oldsz:d.off; uint64_t end=start+(uint64_t)f->rdx;
-            if(end>0xffffffffULL){r=ENOSPC;break;}
-            uint8_t* tmp=static_cast<uint8_t*>(allocator::alloc((size_t)end));
-            if(end && !tmp){r=ENOMEM;break;}
-            if(old && oldsz)memcpy(tmp,old,oldsz);
-            if(start>oldsz)memset(tmp+oldsz,0,(size_t)(start-oldsz));
-            if(f->rdx)memcpy(tmp+start,(const void*)(uintptr_t)f->rsi,(size_t)f->rdx);
-            if(!vfs::write_file(d.path,tmp,(uint32_t)end)){if(tmp)allocator::free(tmp);r=EIO;break;}
-            if(tmp)allocator::free(tmp); uint32_t newsz=0;d.data=vfs::read_file(d.path,&newsz);d.size=newsz;d.off=end;r=(int64_t)f->rdx;
-        }
         else r=EBADF; break;
     }
     case blockos::syscall::SYS_read:{
@@ -294,7 +281,7 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
         if(!paging::is_user_range(f->rsi,(size_t)f->rdx,true)){r=EFAULT;break;}
         auto& d=fs[f->rdi];
         if(d.kind==process::RuntimeFd::Tty) r=blockos_tty_read((void*)(uintptr_t)f->rsi,(size_t)f->rdx);
-        else if(d.kind==process::RuntimeFd::File){if(d.path)d.data=vfs::read_file(d.path,(uint32_t*)&d.size);uint64_t avail=d.off<d.size?d.size-d.off:0;size_t n=(size_t)((uint64_t)f->rdx<avail?(uint64_t)f->rdx:avail);if(n)memcpy((void*)(uintptr_t)f->rsi,d.data+d.off,n);d.off+=n;r=n;}
+        else if(d.kind==process::RuntimeFd::File){uint64_t avail=d.off<d.size?d.size-d.off:0;size_t n=(size_t)((uint64_t)f->rdx<avail?(uint64_t)f->rdx:avail);if(n)memcpy((void*)(uintptr_t)f->rsi,d.data+d.off,n);d.off+=n;r=n;}
         else if(d.kind==process::RuntimeFd::UnixSocket){int si=fd_socket_index((int)f->rdi);if(si<0){r=ENOTCONN;break;}r=(int64_t)socket_read_idx(si,(uint8_t*)(uintptr_t)f->rsi,(size_t)f->rdx);if(r==0&&unix_socks[si].closed)r=0;}
         else if(d.kind==process::RuntimeFd::Device){
             const auto* di=reinterpret_cast<const vfs::DeviceNodeInfo*>(d.data);
@@ -316,22 +303,17 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
     }
     case blockos::syscall::SYS_lseek:{
         if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used||fs[f->rdi].kind!=process::RuntimeFd::File){r=ESPIPE;break;}
-        auto& d=fs[f->rdi]; if(d.path)d.data=vfs::read_file(d.path,(uint32_t*)&d.size); int64_t base=(f->rdx==0?0:(f->rdx==1?(int64_t)d.off:(f->rdx==2?(int64_t)d.size:0))); if(f->rdx>2){r=EINVAL;break;} int64_t n=base+(int64_t)f->rsi;if(n<0){r=EINVAL;break;} d.off=(uint64_t)n;r=n;break;
+        auto& d=fs[f->rdi]; int64_t base=(f->rdx==0?0:(f->rdx==1?(int64_t)d.off:(f->rdx==2?(int64_t)d.size:0))); if(f->rdx>2){r=EINVAL;break;} int64_t n=base+(int64_t)f->rsi;if(n<0){r=EINVAL;break;} d.off=(uint64_t)n;r=n;break;
     }
     case blockos::syscall::SYS_fstat:{
-        if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used||!paging::is_user_range(f->rsi,128,true)){r=EBADF;break;} if(fs[f->rdi].kind==process::RuntimeFd::File&&fs[f->rdi].path)fs[f->rdi].data=vfs::read_file(fs[f->rdi].path,(uint32_t*)&fs[f->rdi].size); memset((void*)(uintptr_t)f->rsi,0,128); uint64_t* q=(uint64_t*)(uintptr_t)f->rsi; q[0]=1;q[1]=1;q[2]=(fs[f->rdi].kind==process::RuntimeFd::Directory)?0040755:((fs[f->rdi].kind==process::RuntimeFd::File)?0100444:0140000);q[7]=fs[f->rdi].size;r=0;break;
+        if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used||!paging::is_user_range(f->rsi,128,true)){r=EBADF;break;} memset((void*)(uintptr_t)f->rsi,0,128); uint64_t* q=(uint64_t*)(uintptr_t)f->rsi; q[0]=1;q[1]=1;q[2]=(fs[f->rdi].kind==process::RuntimeFd::Directory)?0040755:((fs[f->rdi].kind==process::RuntimeFd::File)?0100444:0140000);q[7]=fs[f->rdi].size;r=0;break;
     }
     case blockos::syscall::SYS_openat:{
         char raw[256], path[256]; if(!copy_user_string(f->rsi,raw,sizeof(raw))){r=EFAULT;break;} if(!resolve_path_for_process(p,raw,path,sizeof(path))){r=ENAMETOOLONG;break;} int fd=alloc_fd();if(fd<0){r=EMFILE;break;}
         fs=fdtable(); uint32_t sz=0; const uint8_t* data=vfs::read_file(path,&sz);
-        uint32_t flags=(uint32_t)f->rdx;
-        if(data || vfs::exists(path)){
-            if(vfs::is_directory(path)){const char*sp=store_runtime_path(path);if(!sp){fs[fd]={};r=ENOMEM;break;}fs[fd]={true,process::RuntimeFd::Directory,flags,0,(const uint8_t*)sp,0,0,sp};r=fd;break;}
-            if(vfs::is_device(path)){vfs::DeviceNodeInfo di{}; if(!vfs::get_device_info(path,&di)){fs[fd]={};r=ENOENT;break;} const auto* saved=store_device_info(di); if(!saved){fs[fd]={};r=ENOMEM;break;} fs[fd]={true,process::RuntimeFd::Device,flags,0,(const uint8_t*)saved,di.size,0,nullptr};r=fd;break;}
-            if(flags&01000u){ if(!vfs::write_file(path,nullptr,0)){fs[fd]={};r=EIO;break;} data=vfs::read_file(path,&sz); }
-            const char*sp=store_runtime_path(path);if(!sp){fs[fd]={};r=ENOMEM;break;} fs[fd]={true,process::RuntimeFd::File,flags,0,data,sz,0,sp};r=fd;break;
-        }
-        if(flags&0100u){ if(!vfs::create_file(path,nullptr,0)){fs[fd]={};r=EEXIST;break;} const char*sp=store_runtime_path(path);if(!sp){fs[fd]={};r=ENOMEM;break;} fs[fd]={true,process::RuntimeFd::File,flags,0,nullptr,0,0,sp};r=fd;break;}
+        if(data){fs[fd]={true,process::RuntimeFd::File,(uint16_t)f->rdx,0,data,sz,0};r=fd;break;}
+        if(vfs::is_directory(path)){fs[fd]={true,process::RuntimeFd::Directory,(uint16_t)f->rdx,0,(const uint8_t*)store_directory_path(path),0,0}; r=fd;break;}
+        if(vfs::is_device(path)){vfs::DeviceNodeInfo di{}; if(!vfs::get_device_info(path,&di)){fs[fd]={};r=ENOENT;break;} const auto* saved=store_device_info(di); if(!saved){fs[fd]={};r=ENOMEM;break;} fs[fd]={true,process::RuntimeFd::Device,(uint16_t)f->rdx,0,(const uint8_t*)saved,di.size,0};r=fd;break;}
         fs[fd]={}; r=ENOENT; break;
     }
     case blockos::syscall::SYS_execve:
@@ -433,11 +415,6 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
     case blockos::syscall::SYS_rseq:
     case blockos::syscall::SYS_prctl:
         r=0;break;
-    case blockos::syscall::SYS_ftruncate:{
-        if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used||fs[f->rdi].kind!=process::RuntimeFd::File){r=EBADF;break;} auto&d=fs[f->rdi]; if((d.flags&3u)==0||!d.path||f->rsi>0xffffffffULL){r=EBADF;break;} uint32_t oldsz=0;const uint8_t*old=vfs::read_file(d.path,&oldsz);size_t ns=(size_t)f->rsi;uint8_t*tmp=static_cast<uint8_t*>(allocator::alloc(ns));if(ns&&!tmp){r=ENOMEM;break;}size_t cp=oldsz<ns?oldsz:ns;if(cp)memcpy(tmp,old,cp);if(ns>cp)memset(tmp+cp,0,ns-cp);if(!vfs::write_file(d.path,tmp,(uint32_t)ns)){if(tmp)allocator::free(tmp);r=EIO;break;}if(tmp)allocator::free(tmp);uint32_t newsz=0;d.data=vfs::read_file(d.path,&newsz);d.size=newsz;if(d.off>d.size)d.off=d.size;r=0;break;
-    }
-    case blockos::syscall::SYS_fsync:{r=0;break;}
-    case blockos::syscall::SYS_rmdir:{char path[256],abs[256];if(!copy_user_string(f->rdi,path,sizeof(path))||!resolve_path_for_process(p,path,abs,sizeof(abs))){r=EFAULT;break;}r=vfs::remove_directory(abs)?0:ENOENT;break;}
     case blockos::syscall::SYS_statx:{
         char path[256]; if(!copy_user_string(f->rdi,path,sizeof(path))){r=EFAULT;break;} char abs[256];if(!resolve_path_for_process(p,path,abs,sizeof(abs))){r=ENAMETOOLONG;break;} uint32_t sz=0; const uint8_t*d=vfs::read_file(abs,&sz); if(!d&&!vfs::is_directory(abs)){r=ENOENT;break;} if(!paging::is_user_range(f->r9,256,true)){r=EFAULT;break;} memset((void*)(uintptr_t)f->r9,0,256); ((uint64_t*)(uintptr_t)f->r9)[0]=1; ((uint64_t*)(uintptr_t)f->r9)[2]=vfs::is_directory(abs)?0040755:0100444; ((uint64_t*)(uintptr_t)f->r9)[11]=sz; r=0;break; }
     case blockos::syscall::SYS_socket:{int domain=(int)f->rdi,type=(int)(f->rsi&0xffff),proto=(int)f->rdx;if(domain!=AF_UNIX||(type&0xf)!=SOCK_STREAM){r=ENOSYS;break;}int si=socket_obj_alloc();if(si<0){r=ENOMEM;break;}int fd=alloc_fd();if(fd<0){socket_free(si);r=ENOMEM;break;}fs=fdtable();fs[fd]={true,process::RuntimeFd::UnixSocket,0,(uint32_t)(si+1),nullptr,0,0};r=fd;break;}
@@ -445,7 +422,7 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
     case blockos::syscall::SYS_listen:{int si=fd_socket_index((int)f->rdi);if(si<0){r=ENOTSOCK;break;}unix_socks[si].listener=true;r=0;break;}
     case blockos::syscall::SYS_connect:{int si=fd_socket_index((int)f->rdi);if(si<0){r=ENOTSOCK;break;}if(!paging::is_user_range(f->rsi,(size_t)f->rdx,false)||f->rdx<3){r=EFAULT;break;}const char* sp=(const char*)(uintptr_t)((const uint8_t*)(uintptr_t)f->rsi+2);int li=-1;for(int i=0;i<256;i++)if(unix_socks[i].used&&unix_socks[i].listener&&strcmp(unix_socks[i].path,sp)==0){li=i;break;}if(li<0){r=ENOENT;break;}int peer=socket_obj_alloc();if(peer<0||unix_socks[li].pending_count>=16){r=ENOMEM;break;}unix_socks[si].peer=peer;unix_socks[si].connected=true;unix_socks[peer].peer=si;unix_socks[peer].connected=true;unix_socks[li].pending[unix_socks[li].pending_count++]=peer;r=0;break;}
     case blockos::syscall::SYS_accept:
-    case blockos::syscall::SYS_accept4:{int li=fd_socket_index((int)f->rdi);if(li<0||!unix_socks[li].listener){r=ENOTSOCK;break;}if(unix_socks[li].pending_count==0){r=EAGAIN;break;}int si=unix_socks[li].pending[0];for(int i=1;i<unix_socks[li].pending_count;i++)unix_socks[li].pending[i-1]=unix_socks[li].pending[i];--unix_socks[li].pending_count;int fd=alloc_fd();if(fd<0){r=ENOMEM;break;}fs=fdtable();fs[fd]={true,process::RuntimeFd::UnixSocket,(uint32_t)f->r10,(uint32_t)(si+1),nullptr,0,0};r=fd;break;}
+    case blockos::syscall::SYS_accept4:{int li=fd_socket_index((int)f->rdi);if(li<0||!unix_socks[li].listener){r=ENOTSOCK;break;}if(unix_socks[li].pending_count==0){r=EAGAIN;break;}int si=unix_socks[li].pending[0];for(int i=1;i<unix_socks[li].pending_count;i++)unix_socks[li].pending[i-1]=unix_socks[li].pending[i];--unix_socks[li].pending_count;int fd=alloc_fd();if(fd<0){r=ENOMEM;break;}fs=fdtable();fs[fd]={true,process::RuntimeFd::UnixSocket,(uint16_t)f->r10,(uint32_t)(si+1),nullptr,0,0};r=fd;break;}
     case blockos::syscall::SYS_sendto:{int si=fd_socket_index((int)f->rdi);if(si<0){r=ENOTSOCK;break;}if(!paging::is_user_range(f->rsi,(size_t)f->rdx,false)){r=EFAULT;break;}if(!socket_write_idx(si,(const uint8_t*)(uintptr_t)f->rsi,(size_t)f->rdx)){r=EAGAIN;break;}r=f->rdx;break;}
     case blockos::syscall::SYS_recvfrom:{int si=fd_socket_index((int)f->rdi);if(si<0){r=ENOTSOCK;break;}if(!paging::is_user_range(f->rsi,(size_t)f->rdx,true)){r=EFAULT;break;}r=(int64_t)socket_read_idx(si,(uint8_t*)(uintptr_t)f->rsi,(size_t)f->rdx);break;}
     case blockos::syscall::SYS_shutdown:{r=0;break;}
@@ -461,10 +438,10 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
     case blockos::syscall::SYS_epoll_create1:{int ei=-1;for(int i=0;i<64;i++)if(!epolls[i].used){epolls[i]={};epolls[i].used=true;ei=i;break;}if(ei<0){r=ENOMEM;break;}int fd=alloc_fd();if(fd<0){epolls[ei]={};r=ENOMEM;break;}fs=fdtable();fs[fd]={true,process::RuntimeFd::File,0,(uint32_t)(0x80000000u|(uint32_t)ei),nullptr,0,0};r=fd;break;}
     case blockos::syscall::SYS_epoll_ctl:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used){r=EBADF;break;}uint32_t obj=fs[f->rdi].object; if(!(obj&0x80000000u)){r=EINVAL;break;}EpollObj& ep=epolls[obj&0x7fffffffu];if(f->r9>0xffffffffu){r=EINVAL;break;}struct Ev{uint32_t events;uint32_t pad;uint64_t data;};if(!paging::is_user_range(f->r9,16,false)){r=EFAULT;break;}auto* ev=(Ev*)(uintptr_t)f->r9;int idx=-1;for(int i=0;i<64;i++)if(ep.watch[i].used&&ep.watch[i].fd==(int)f->r8){idx=i;break;}int op=(int)f->rsi;if(op==1){for(int i=0;i<64;i++)if(!ep.watch[i].used){ep.watch[i]={true,(int)f->r8,ev->events,ev->data};r=0;break;}if(r!=0)r=ENOMEM;}else if(op==2){if(idx>=0){ep.watch[idx]={};r=0;}else r=ENOENT;}else if(op==3){if(idx>=0){ep.watch[idx].events=ev->events;ep.watch[idx].data=ev->data;r=0;}else r=ENOENT;}else r=EINVAL;break;}
     case blockos::syscall::SYS_epoll_wait:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used){r=EBADF;break;}uint32_t obj=fs[f->rdi].object;if(!(obj&0x80000000u)){r=EINVAL;break;}EpollObj& ep=epolls[obj&0x7fffffffu];struct Ev{uint32_t events;uint32_t pad;uint64_t data;};if(!paging::is_user_range(f->rsi,(size_t)f->rdx*sizeof(Ev),true)){r=EFAULT;break;}auto*out=(Ev*)(uintptr_t)f->rsi;int n=0;for(auto&w:ep.watch){if(!w.used||n>=(int)f->rdx)continue;uint32_t ev=0;if((w.events&POLLIN)&&fd_readable(w.fd))ev|=POLLIN;if((w.events&POLLOUT)&&fd_writable(w.fd))ev|=POLLOUT;if(ev){out[n++]={ev,0,w.data};}}r=n;break;}
-    case blockos::syscall::SYS_fcntl:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used){r=EBADF;break;}auto&d=fs[f->rdi];switch(f->rsi){case F_GETFD:r=(d.flags&FD_CLOEXEC)?FD_CLOEXEC:0;break;case F_SETFD:d.flags=(uint32_t)((d.flags&~FD_CLOEXEC)|((uint32_t)f->rdx&FD_CLOEXEC));r=0;break;case F_GETFL:r=d.flags;break;case F_SETFL:d.flags=(uint32_t)f->rdx;r=0;break;case F_DUPFD: case 1030:{int n=alloc_fd((uint32_t)f->rdx);if(n<0){r=EMFILE;break;}fs[n]=d;if(f->rsi==1030)fs[n].flags&=~FD_CLOEXEC;r=n;break;}default:r=EINVAL;break;}break;}
+    case blockos::syscall::SYS_fcntl:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used){r=EBADF;break;}auto&d=fs[f->rdi];switch(f->rsi){case F_GETFD:r=(d.flags&FD_CLOEXEC)?FD_CLOEXEC:0;break;case F_SETFD:d.flags=(uint16_t)((d.flags&~FD_CLOEXEC)|((uint16_t)f->rdx&FD_CLOEXEC));r=0;break;case F_GETFL:r=d.flags;break;case F_SETFL:d.flags=(uint16_t)f->rdx;r=0;break;case F_DUPFD:{int n=alloc_fd((uint16_t)f->rdx);if(n<0){r=EMFILE;break;}fs[n]=d;r=n;break;}default:r=EINVAL;break;}break;}
     case blockos::syscall::SYS_dup:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used){r=EBADF;break;}int n=alloc_fd();if(n<0){r=ENOMEM;break;}fs[n]=fs[f->rdi];r=n;break;}
     case blockos::syscall::SYS_dup2:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used||f->rsi>=process::MAX_RUNTIME_FDS){r=EBADF;break;}if(f->rdi==f->rsi){r=f->rsi;break;}fs[f->rsi]=fs[f->rdi];r=f->rsi;break;}
-    case blockos::syscall::SYS_clock_gettime:{if(!paging::is_user_range(f->rsi,16,true)){r=EFAULT;break;}uint64_t ms=timer_uptime_ms();struct TS{int64_t sec,nsec;}*ts=(TS*)(uintptr_t)f->rsi;ts->sec=(int64_t)(ms/1000);ts->nsec=(int64_t)((ms%1000)*1000000);r=0;break;}
+    case blockos::syscall::SYS_clock_gettime:{if(!paging::is_user_range(f->rsi,16,true)){r=EFAULT;break;}uint64_t ms=timer_uptime_ms();if(f->rdi==0&&blockos::net::ntp::synchronized())ms=blockos::net::ntp::unix_time_seconds()*1000ull+(timer_uptime_ms()%1000ull);struct TS{int64_t sec,nsec;}*ts=(TS*)(uintptr_t)f->rsi;ts->sec=(int64_t)(ms/1000);ts->nsec=(int64_t)((ms%1000)*1000000);r=0;break;}
     case blockos::syscall::SYS_wait4:{if(!p){r=ECHILD;break;}uint64_t wanted=f->rdi;for(size_t i=0;i<process::slot_count();i++){auto*x=process::slot_at(i);if(!x||x->state!=process::State::TERMINATED||x->parent_pid!=p->tid)continue;if(wanted && x->pid!=wanted)continue;r=x->pid;x->state=process::State::EMPTY;break;}if(r==ENOSYS)r=ECHILD;break;}
     case blockos::syscall::SYS_access:{char path[256];if(!copy_user_string(f->rdi,path,sizeof(path))){r=EFAULT;break;}uint32_t sz=0;r=(vfs::read_file(path,&sz)||vfs::is_directory(path)||vfs::is_device(path))?0:ENOENT;break;}
     case blockos::syscall::SYS_stat: case blockos::syscall::SYS_lstat:{

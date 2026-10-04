@@ -1,6 +1,7 @@
 #include "ethernet.hpp"
 #include "arp.hpp"
 #include "ipv4.hpp"
+#include "ipv6.hpp"
 
 namespace blockos::net {
 
@@ -14,6 +15,7 @@ void ethernet_receive(const void* frame, size_t len) {
     switch (type) {
         case ETHERTYPE_ARP:  arp_receive(payload, plen); break;
         case ETHERTYPE_IPV4: ipv4_receive(payload, plen); break;
+        case ETHERTYPE_IPV6: ipv6_receive(payload, plen); break;
         default: break;
     }
 }
