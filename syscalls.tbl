@@ -82,3 +82,13 @@
 80 ftruncate
 81 fsync
 82 statx
+
+83 arch_prctl
+84 socketpair
+85 sendmsg
+86 recvmsg
+87 rseq
+88 setpgid
+89 getpgid
+90 setsid
+91 fork

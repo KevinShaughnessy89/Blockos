@@ -65,6 +65,8 @@ Process* spawn(const void* elf, size_t size, const char* path) {
     p->pml4 = pml4;
     p->fd_owner = p;
     p->parent_pid = 0;
+    p->pgid = p->pid;
+    p->sid = p->pid;
     p->tid = p->pid;
     p->fs_base = 0;
     p->exit_code = 0;

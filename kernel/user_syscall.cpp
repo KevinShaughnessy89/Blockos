@@ -1,5 +1,4 @@
 #include "preempt.hpp"
-#include "net/ntp.hpp"
 #include "syscall/syscall_numbers.hpp"
 #include "process.hpp"
 #include "arch/86_64x/paging.hpp"
@@ -18,7 +17,7 @@ extern "C" void blockos_user_return();
 extern "C" uint64_t blockos_user_saved_rsp;
 
 namespace {
-constexpr int64_t EPERM=-1,EINTR=-4,EBADF=-9,EAGAIN=-11,EMFILE=-24,EFAULT=-14,EINVAL=-22,ENOSYS=-38,ENOTCONN=-107,EADDRINUSE=-98,ENOENT=-2,ENOTSOCK=-88,EMSGSIZE=-90,ENOMEM=-12,ESPIPE=-29,ECHILD=-10,EEXIST=-17,ENOTDIR=-20,EISDIR=-21,ENAMETOOLONG=-36,ENOSPC=-28,ENOTEMPTY=-39,ENOTTY=-25;
+constexpr int64_t EPERM=-1,ESRCH=-3,EINTR=-4,EBADF=-9,EAGAIN=-11,EMFILE=-24,EFAULT=-14,EINVAL=-22,ENOSYS=-38,ENOTCONN=-107,EADDRINUSE=-98,ENOENT=-2,ENOTSOCK=-88,EMSGSIZE=-90,ENOMEM=-12,ESPIPE=-29,ECHILD=-10,EEXIST=-17,ENOTDIR=-20,EISDIR=-21,ENAMETOOLONG=-36,ENOSPC=-28,ENOTEMPTY=-39,ENOTTY=-25;
 constexpr uint64_t PAGE=0x1000;
 constexpr uint64_t MAP_ANONYMOUS=0x20;
 constexpr uint64_t MAP_FIXED=0x10;
@@ -36,6 +35,7 @@ constexpr int F_SETFL=4;
 constexpr uint64_t FD_CLOEXEC=1;
 constexpr uint64_t FD_NONBLOCK=04000;
 constexpr uint32_t POLLIN=0x001, POLLOUT=0x004, POLLERR=0x008, POLLHUP=0x010;
+constexpr int SIGTERM=15, SIGINT=2, SIGQUIT=3, SIGKILL=9, SIGABRT=6;
 
 struct UnixSocket {
     bool used;
@@ -362,10 +362,34 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
         if(preempt::block_until_from_syscall(f,deadline)) return;
         break;
     }
+    case blockos::syscall::SYS_fork:{
+        if(!p){r=EINVAL;break;}
+        process::Process* child=nullptr;
+        for(size_t i=0;i<process::slot_count();i++){auto* x=process::slot_at(i);if(x&&x->state==process::State::EMPTY){child=x;break;}}
+        if(!child){r=ENOMEM;break;}
+        memset(child,0,sizeof(*child));
+        child->pid = child->tid = process::count()+1000;
+        while(process::get(child->pid)) child->pid++;
+        child->pml4=p->pml4;
+        child->fd_owner=p->fd_owner?p->fd_owner:p;
+        child->parent_pid=p->pid;
+        child->pgid=p->pgid;
+        child->sid=p->sid;
+        child->is_thread=false;
+        child->fs_base=p->fs_base;
+        child->brk_base=p->brk_base; child->brk_current=p->brk_current; child->mmap_next=p->mmap_next;
+        child->entry=p->entry; child->stack=p->stack; child->saved_frame=*reinterpret_cast<TrapFrame*>(f);
+        child->saved_frame.rax=0; child->state=process::State::READY; child->frame_valid=true;
+        memcpy(child->name,p->name,sizeof(child->name)); memcpy(child->cwd,p->cwd,sizeof(child->cwd));
+        child->signal_mask=p->signal_mask; memcpy(child->signal_handlers,p->signal_handlers,sizeof(child->signal_handlers));
+        memcpy(child->signal_flags,p->signal_flags,sizeof(child->signal_flags));
+        memcpy(child->fds,p->fds,sizeof(child->fds));
+        r=(int64_t)child->pid; break;
+    }
     case blockos::syscall::SYS_clone:{
         if(!p){r=EINVAL;break;}uint64_t child_sp=f->rsi; if(child_sp && (child_sp&0xF))child_sp-=8; if(!child_sp||!paging::is_user_range(child_sp-8,8,true)){r=EFAULT;break;}
         process::Process* child=nullptr;for(size_t i=0;i<process::slot_count();i++){auto* x=process::slot_at(i);if(x&&x->state==process::State::EMPTY){child=x;break;}}
-        if(!child){r=ENOMEM;break;}memset(child,0,sizeof(*child)); child->pid=child->tid=process::count()+1000; while(process::get(child->pid))child->pid++; child->pml4=p->pml4; child->fd_owner=p->fd_owner?p->fd_owner:p; child->parent_pid=p->tid; child->is_thread=true; child->fs_base=f->r8?f->r8:p->fs_base; child->brk_base=p->brk_base; child->brk_current=p->brk_current; child->mmap_next=p->mmap_next; child->entry=p->entry; child->stack=child_sp; child->saved_frame=*reinterpret_cast<TrapFrame*>(f); child->saved_frame.rax=0; child->saved_frame.rdi=f->rdx; child->saved_frame.rsp=child_sp; child->state=process::State::READY; child->frame_valid=true; r=(int64_t)child->tid; break;
+        if(!child){r=ENOMEM;break;}memset(child,0,sizeof(*child)); child->pid=child->tid=process::count()+1000; while(process::get(child->pid))child->pid++; child->pml4=p->pml4; child->fd_owner=p->fd_owner?p->fd_owner:p; child->parent_pid=p->tid; child->pgid=p->pgid; child->sid=p->sid; child->is_thread=true; child->fs_base=f->r8?f->r8:p->fs_base; child->brk_base=p->brk_base; child->brk_current=p->brk_current; child->mmap_next=p->mmap_next; child->entry=p->entry; child->stack=child_sp; child->saved_frame=*reinterpret_cast<TrapFrame*>(f); child->saved_frame.rax=0; child->saved_frame.rdi=f->rdx; child->saved_frame.rsp=child_sp; child->state=process::State::READY; child->frame_valid=true; r=(int64_t)child->tid; break;
     }
     case blockos::syscall::SYS_sched_yield:{r=0;f->rax=0;if(preempt::yield_from_syscall(f))return;break;}
     case blockos::syscall::SYS_futex:{
@@ -410,7 +434,41 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
     }
     case blockos::syscall::SYS_rt_sigreturn:r=0;break;
     case blockos::syscall::SYS_kill:
-    case blockos::syscall::SYS_tgkill:r=0;break;
+    case blockos::syscall::SYS_tgkill:{
+        if(!p){r=ESRCH;break;}
+        int64_t target=(int64_t)f->rdi; int sig=(int)f->rsi;
+        if(sig<0||sig>64){r=EINVAL;break;}
+        bool found=false;
+        auto match=[&](process::Process* x)->bool{
+            if(!x||x->state==process::State::EMPTY||x->state==process::State::TERMINATED) return false;
+            if(target>0) return (int64_t)x->pid==target;
+            if(target==0) return x->pgid==p->pgid;
+            if(target==-1) return x->pid!=p->pid;
+            return x->pgid==(uint64_t)(-target);
+        };
+        for(size_t i=0;i<process::slot_count();i++){
+            auto* x=process::slot_at(i); if(!match(x)) continue; found=true;
+            if(sig==0) continue;
+            if(sig==SIGTERM || sig==SIGINT || sig==SIGQUIT || sig==SIGKILL || sig==SIGABRT){
+                x->exit_code=128+sig; x->state=process::State::TERMINATED;
+            }
+        }
+        r=found?0:ESRCH; break;
+    }
+    case blockos::syscall::SYS_setpgid:{
+        if(!p){r=ESRCH;break;}
+        uint64_t pid=f->rdi?f->rdi:p->pid, pgid=f->rsi;
+        if(!pgid) pgid=pid;
+        if(pid==p->pid){ p->pgid=pgid; r=0; break; }
+        auto* x=process::get(pid); if(!x){r=ESRCH;break;} x->pgid=pgid?pgid:x->pid; r=0; break;
+    }
+    case blockos::syscall::SYS_getpgid:{
+        if(!p){r=ESRCH;break;}
+        uint64_t pid=f->rdi?f->rdi:p->pid; auto* x=process::get(pid); if(!x){r=ESRCH;break;} r=x->pgid; break;
+    }
+    case blockos::syscall::SYS_setsid:{
+        if(!p){r=ESRCH;break;} p->sid=p->pid; p->pgid=p->pid; r=p->sid; break;
+    }
     case blockos::syscall::SYS_set_robust_list:
     case blockos::syscall::SYS_rseq:
     case blockos::syscall::SYS_prctl:
@@ -441,8 +499,27 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
     case blockos::syscall::SYS_fcntl:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used){r=EBADF;break;}auto&d=fs[f->rdi];switch(f->rsi){case F_GETFD:r=(d.flags&FD_CLOEXEC)?FD_CLOEXEC:0;break;case F_SETFD:d.flags=(uint16_t)((d.flags&~FD_CLOEXEC)|((uint16_t)f->rdx&FD_CLOEXEC));r=0;break;case F_GETFL:r=d.flags;break;case F_SETFL:d.flags=(uint16_t)f->rdx;r=0;break;case F_DUPFD:{int n=alloc_fd((uint16_t)f->rdx);if(n<0){r=EMFILE;break;}fs[n]=d;r=n;break;}default:r=EINVAL;break;}break;}
     case blockos::syscall::SYS_dup:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used){r=EBADF;break;}int n=alloc_fd();if(n<0){r=ENOMEM;break;}fs[n]=fs[f->rdi];r=n;break;}
     case blockos::syscall::SYS_dup2:{if(f->rdi>=process::MAX_RUNTIME_FDS||!fs||!fs[f->rdi].used||f->rsi>=process::MAX_RUNTIME_FDS){r=EBADF;break;}if(f->rdi==f->rsi){r=f->rsi;break;}fs[f->rsi]=fs[f->rdi];r=f->rsi;break;}
-    case blockos::syscall::SYS_clock_gettime:{if(!paging::is_user_range(f->rsi,16,true)){r=EFAULT;break;}uint64_t ms=timer_uptime_ms();if(f->rdi==0&&blockos::net::ntp::synchronized())ms=blockos::net::ntp::unix_time_seconds()*1000ull+(timer_uptime_ms()%1000ull);struct TS{int64_t sec,nsec;}*ts=(TS*)(uintptr_t)f->rsi;ts->sec=(int64_t)(ms/1000);ts->nsec=(int64_t)((ms%1000)*1000000);r=0;break;}
-    case blockos::syscall::SYS_wait4:{if(!p){r=ECHILD;break;}uint64_t wanted=f->rdi;for(size_t i=0;i<process::slot_count();i++){auto*x=process::slot_at(i);if(!x||x->state!=process::State::TERMINATED||x->parent_pid!=p->tid)continue;if(wanted && x->pid!=wanted)continue;r=x->pid;x->state=process::State::EMPTY;break;}if(r==ENOSYS)r=ECHILD;break;}
+    case blockos::syscall::SYS_clock_gettime:{if(!paging::is_user_range(f->rsi,16,true)){r=EFAULT;break;}uint64_t ms=timer_uptime_ms();struct TS{int64_t sec,nsec;}*ts=(TS*)(uintptr_t)f->rsi;ts->sec=(int64_t)(ms/1000);ts->nsec=(int64_t)((ms%1000)*1000000);r=0;break;}
+    case blockos::syscall::SYS_wait4:{
+        if(!p){r=ECHILD;break;}
+        int64_t wanted=(int64_t)f->rdi; int options=(int)f->rdx; bool have_child=false;
+        for(size_t i=0;i<process::slot_count();i++){
+            auto*x=process::slot_at(i); if(!x||x==p||x->state==process::State::EMPTY||x->parent_pid!=p->pid) continue;
+            if(wanted>0 && (int64_t)x->pid!=wanted) continue;
+            if(wanted==0 && x->pgid!=p->pgid) continue;
+            have_child=true;
+            if(x->state!=process::State::TERMINATED) continue;
+            if(f->rsi && !paging::is_user_range(f->rsi,4,true)){r=EFAULT;break;}
+            if(f->rsi){uint32_t st=(uint32_t)((x->exit_code&0xffu)<<8); *(uint32_t*)(uintptr_t)f->rsi=st;}
+            r=(int64_t)x->pid; x->state=process::State::EMPTY; break;
+        }
+        if(r==ENOSYS){
+            if(!have_child) r=ECHILD;
+            else if(options & 1) r=0; /* WNOHANG */
+            else r=EAGAIN;
+        }
+        break;
+    }
     case blockos::syscall::SYS_access:{char path[256];if(!copy_user_string(f->rdi,path,sizeof(path))){r=EFAULT;break;}uint32_t sz=0;r=(vfs::read_file(path,&sz)||vfs::is_directory(path)||vfs::is_device(path))?0:ENOENT;break;}
     case blockos::syscall::SYS_stat: case blockos::syscall::SYS_lstat:{
         char path[256];if(!copy_user_string(f->rdi,path,sizeof(path))){r=EFAULT;break;}

@@ -12,12 +12,11 @@ struct RuntimeFd {
     enum Kind : uint8_t { None = 0, Tty, File, Directory, Device, UnixSocket };
     bool used;
     Kind kind;
-    uint32_t flags;
+    uint16_t flags;
     uint32_t object;
     const uint8_t* data;
     uint64_t size;
     uint64_t off;
-    const char* path;
 };
 
 constexpr size_t MAX_RUNTIME_FDS = 128;
@@ -34,6 +33,8 @@ struct Process {
      * and saved ring3 frames. */
     Process* fd_owner;
     uint64_t parent_pid;
+    uint64_t pgid;
+    uint64_t sid;
     uint64_t tid;
     uint64_t fs_base;
     uint64_t wake_deadline_ms;

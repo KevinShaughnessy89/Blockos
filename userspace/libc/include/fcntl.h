@@ -10,6 +10,9 @@
 #define O_NONBLOCK  04000
 #define O_DIRECTORY 0200000
 #define O_CLOEXEC   02000000
+#define O_PATH      010000000
+#define O_NOFOLLOW  0400000
+#define O_SYNC      04010000
 
 #define AT_FDCWD (-100)
 
@@ -21,7 +24,6 @@ int openat(int dirfd, const char* path, int flags, ...);
 #define F_SETFD 2
 #define F_GETFL 3
 #define F_SETFL 4
-#define F_DUPFD_CLOEXEC 1030
 #define FD_CLOEXEC 1
 
 int fcntl(int fd, int cmd, ...);
