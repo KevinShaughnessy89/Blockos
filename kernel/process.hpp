@@ -34,6 +34,8 @@ struct Process {
      * and saved ring3 frames. */
     Process* fd_owner;
     uint64_t parent_pid;
+    uint64_t pgid;
+    uint64_t sid;
     uint64_t tid;
     uint64_t fs_base;
     uint64_t wake_deadline_ms;

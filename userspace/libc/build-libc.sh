@@ -1,18 +1,18 @@
 #!/bin/sh
 set -eu
-CC=${CC:-x86_64-elf-gcc}
-AS=${AS:-x86_64-elf-as}
-AR=${AR:-x86_64-elf-ar}
+CC=${CC:-${BLOCKOS_CC:-x86_64-elf-gcc}}
+AS=${AS:-${BLOCKOS_AS:-x86_64-elf-as}}
+AR=${AR:-${BLOCKOS_AR:-x86_64-elf-ar}}
 OUTDIR=${OUTDIR:-userspace/libc/build}
 SRC=userspace/libc/src
 INC=userspace/libc/include
 mkdir -p "$OUTDIR"
-CFLAGS="-std=c11 -O2 -ffreestanding -fno-builtin -fno-stack-protector -fPIC -fno-plt -I$INC -Iuserspace/ldso"
-"$AS" --64 -o "$OUTDIR/crt1.o" "$SRC/crt1.S"
-"$AS" --64 -o "$OUTDIR/pthread_clone.o" "$SRC/pthread_clone.S"
+CFLAGS="-std=c11 -O2 -ffreestanding -fno-builtin -fno-stack-protector -fPIC -fno-plt -I$INC -Iuserspace/ldso ${BLOCKOS_CFLAGS:-}"
+"$AS" ${BLOCKOS_ASFLAGS:-} --64 -o "$OUTDIR/crt1.o" "$SRC/crt1.S"
+"$AS" ${BLOCKOS_ASFLAGS:-} --64 -o "$OUTDIR/pthread_clone.o" "$SRC/pthread_clone.S"
 rm -f "$OUTDIR"/*.o "$OUTDIR/libc.a" "$OUTDIR/libc.so" "$OUTDIR/libpthread.so"
-"$AS" --64 -o "$OUTDIR/crt1.o" "$SRC/crt1.S"
-"$AS" --64 -o "$OUTDIR/pthread_clone.o" "$SRC/pthread_clone.S"
+"$AS" ${BLOCKOS_ASFLAGS:-} --64 -o "$OUTDIR/crt1.o" "$SRC/crt1.S"
+"$AS" ${BLOCKOS_ASFLAGS:-} --64 -o "$OUTDIR/pthread_clone.o" "$SRC/pthread_clone.S"
 
 LIBC_OBJS=""
 for f in "$SRC"/*.c; do

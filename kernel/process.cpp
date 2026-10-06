@@ -65,6 +65,8 @@ Process* spawn(const void* elf, size_t size, const char* path) {
     p->pml4 = pml4;
     p->fd_owner = p;
     p->parent_pid = 0;
+    p->pgid = p->pid;
+    p->sid = p->pid;
     p->tid = p->pid;
     p->fs_base = 0;
     p->exit_code = 0;
@@ -189,6 +191,8 @@ Process* fork_like(Process* parent, const TrapFrame& parent_frame, bool vfork_mo
     child->pml4 = parent->pml4;
     child->fd_owner = child;
     child->parent_pid = parent->pid;
+    child->pgid = parent->pgid;
+    child->sid = parent->sid;
     child->tid = child->pid;
     child->fs_base = parent->fs_base;
     child->brk_base = parent->brk_base;

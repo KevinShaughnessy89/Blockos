@@ -1,11 +1,12 @@
 #!/bin/sh
 set -eu
-CC=${CC:-x86_64-elf-gcc}
+CC=${CC:-${BLOCKOS_CC:-x86_64-elf-gcc}}
 OUT=${OUT:-userspace/ldso/ld.so}
 
 mkdir -p "$(dirname "$OUT")"
 
 "$CC" \
+    ${BLOCKOS_CFLAGS:-} \
     -std=c11 -O2 \
     -ffreestanding -fPIE -fno-plt -fno-stack-protector \
     -fno-asynchronous-unwind-tables -fno-unwind-tables \

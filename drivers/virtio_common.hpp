@@ -10,7 +10,8 @@ namespace virtio_common {
 enum class DeviceType : uint8_t {
     BLOCK = 0,
     NETWORK = 1,
-    INPUT = 2
+    INPUT = 2,
+    GPU = 16
 };
 
 enum class Transport : uint8_t {

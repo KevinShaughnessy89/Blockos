@@ -30,6 +30,7 @@ typedef struct {
 #define WIFSTOPPED(s)  (((s) & 0xff) == 0x7f)
 #define WSTOPSIG(s)    (((s) >> 8) & 0xff)
 
+pid_t wait(int* status);
 pid_t waitpid(pid_t pid, int* status, int options);
 pid_t wait4(pid_t pid, int* status, int options, void* rusage);
 int waitid(int idtype, pid_t id, siginfo_t* infop, int options);

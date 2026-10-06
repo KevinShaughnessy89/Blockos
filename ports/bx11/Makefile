@@ -1,4 +1,6 @@
-CXX ?= g++
+TOOLCHAIN ?= gnu
+CXX ?= $(if $(filter clang,$(TOOLCHAIN)),clang++,g++)
+AR ?= $(if $(filter clang,$(TOOLCHAIN)),llvm-ar,ar)
 CPPFLAGS += -Iinclude -I.
 CXXFLAGS += -std=c++17 -O2 -Wall -Wextra -Werror=return-type
 

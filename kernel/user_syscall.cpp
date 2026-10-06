@@ -419,6 +419,23 @@ extern "C" void blockos_syscall_dispatch_frame(BlockOSSyscallFrame* f){
     case blockos::syscall::SYS_rt_sigreturn:r=0;break;
     case blockos::syscall::SYS_kill:
     case blockos::syscall::SYS_tgkill:r=0;break;
+    case blockos::syscall::SYS_setpgid:{
+        if(!p){r=ESRCH;break;}
+        uint64_t pid=f->rdi?f->rdi:p->pid, pgid=f->rsi;
+        if(!pgid) pgid=pid;
+        auto* x=process::get(pid); if(!x){r=ESRCH;break;}
+        x->pgid=pgid; r=0; break;
+    }
+    case blockos::syscall::SYS_getpgid:{
+        if(!p){r=ESRCH;break;}
+        uint64_t pid=f->rdi?f->rdi:p->pid; auto* x=process::get(pid);
+        if(!x){r=ESRCH;break;}
+        r=(int64_t)x->pgid; break;
+    }
+    case blockos::syscall::SYS_setsid:{
+        if(!p){r=ESRCH;break;}
+        p->sid=p->pid; p->pgid=p->pid; r=(int64_t)p->sid; break;
+    }
     case blockos::syscall::SYS_set_robust_list:
     case blockos::syscall::SYS_rseq:
     case blockos::syscall::SYS_prctl:

@@ -13,10 +13,28 @@ EFI_CRT        := $(GNU_EFI_LIBDIR)/crt0-efi-x86_64.o
 EFI_LIB        := $(GNU_EFI_LIBDIR)/libefi.a
 GNU_EFI_LIB    := $(GNU_EFI_LIBDIR)/libgnuefi.a
 
-CXX      := g++
-LD       := ld
-OBJCOPY  := objcopy
-PYTHON   := python3
+# Toolchain selection: GNU by default, LLVM/Clang with TOOLCHAIN=clang.
+TOOLCHAIN ?= gnu
+
+ifeq ($(origin CXX),default)
+  CXX := $(if $(filter clang,$(TOOLCHAIN)),clang++,g++)
+endif
+ifeq ($(origin LD),default)
+  LD := ld
+endif
+ifeq ($(origin OBJCOPY),undefined)
+  OBJCOPY := $(if $(filter clang,$(TOOLCHAIN)),llvm-objcopy,objcopy)
+endif
+ifeq ($(origin AR),default)
+  AR := $(if $(filter clang,$(TOOLCHAIN)),llvm-ar,ar)
+endif
+ifeq ($(origin RANLIB),default)
+  RANLIB := $(if $(filter clang,$(TOOLCHAIN)),llvm-ranlib,ranlib)
+endif
+ifeq ($(origin STRIP),default)
+  STRIP := $(if $(filter clang,$(TOOLCHAIN)),llvm-strip,strip)
+endif
+PYTHON   ?= python3
 
 # ============================================================
 # C++ FLAGS
@@ -138,7 +156,7 @@ EXCLUDED_SRC := \
 SRC := $(filter-out $(EXCLUDED_SRC), \
 	$(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp)))
 
-# Hardware portability: include the real nested network drivers.
+# Hardware portability: include nested NIC drivers.
 SRC += $(wildcard drivers/net/*.cpp)
 
 SRC += kernel/cmd/cmd_ata.cpp
@@ -190,6 +208,14 @@ LUA_ELF    := $(LUA_DIR)/build/lua
 # ============================================================
 
 all: $(EFI_OUT)
+
+.PHONY: toolchain-info
+toolchain-info:
+	@echo "TOOLCHAIN=$(TOOLCHAIN)"
+	@echo "CXX=$(CXX)"
+	@echo "LD=$(LD)"
+	@echo "OBJCOPY=$(OBJCOPY)"
+	@echo "AR=$(AR)"
 
 # ============================================================
 # FULL STACK

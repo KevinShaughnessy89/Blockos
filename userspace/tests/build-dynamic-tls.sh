@@ -1,10 +1,10 @@
 #!/bin/sh
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
-CC=${CC:-x86_64-elf-gcc}
+CC=${CC:-${BLOCKOS_CC:-x86_64-elf-gcc}}
 OUT=${OUT:-$ROOT/userspace/tests/dynamic-tls}
 LIB=$ROOT/userspace/libc/build
-"$CC" -std=c11 -O2 -fPIE -pie -ffreestanding -fno-stack-protector \
+"$CC" ${BLOCKOS_CFLAGS:-} -std=c11 -O2 -fPIE -pie -ffreestanding -fno-stack-protector \
   -I"$ROOT/userspace/libc/include" \
   "$ROOT/userspace/tests/dynamic_tls.c" "$LIB/crt1.o" \
   -L"$LIB" -lpthread -lc \

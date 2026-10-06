@@ -17,6 +17,8 @@ constexpr uint16_t VIRTIO_NET_LEGACY = 0x1000;
 constexpr uint16_t VIRTIO_BLK_LEGACY = 0x1001;
 constexpr uint16_t VIRTIO_NET_MODERN = 0x1041;
 constexpr uint16_t VIRTIO_BLK_MODERN = 0x1042;
+constexpr uint16_t VIRTIO_GPU_LEGACY = 0x1010;
+constexpr uint16_t VIRTIO_GPU_MODERN = 0x1050;
 
 constexpr uint8_t STATUS_ACKNOWLEDGE = 0x01;
 constexpr uint8_t STATUS_DRIVER      = 0x02;
@@ -301,6 +303,10 @@ static bool find_device_ids(virtio_common::DeviceType type, uint16_t& legacy_id,
         case virtio_common::DeviceType::BLOCK:
             legacy_id = VIRTIO_BLK_LEGACY;
             modern_id = VIRTIO_BLK_MODERN;
+            return true;
+        case virtio_common::DeviceType::GPU:
+            legacy_id = VIRTIO_GPU_LEGACY;
+            modern_id = VIRTIO_GPU_MODERN;
             return true;
         default:
             return false;

@@ -1,26 +1,4 @@
 #include "termios.h"
-#include "sys/ioctl.h"
-#include "errno.h"
-
-pid_t tcgetpgrp(int fd) {
-    (void)fd;
-    return getpgrp();
-}
-
-int tcsetpgrp(int fd, pid_t pgrp) {
-    (void)fd; (void)pgrp;
-    return 0;
-}
-
-int tcgetattr(int fd, struct termios* termios_p) {
-    (void)fd;
-    if (!termios_p) { errno = 14; return -1; }
-    for (unsigned i = 0; i < sizeof(*termios_p); ++i)
-        ((unsigned char*)termios_p)[i] = 0;
-    return 0;
-}
-
-int tcsetattr(int fd, int optional_actions, const struct termios* termios_p) {
-    (void)fd; (void)optional_actions; (void)termios_p;
-    return 0;
-}
+static struct termios d={.c_iflag=IXON,.c_oflag=OPOST,.c_cflag=CS8|CREAD|CLOCAL,.c_lflag=ISIG|ICANON|ECHO|ECHOE|IEXTEN,.c_cc={[VINTR]=3,[VQUIT]=28,[VERASE]=127,[VKILL]=21,[VEOF]=4,[VMIN]=1,[VTIME]=0,[VSTART]=17,[VSTOP]=19},.c_ispeed=B38400,.c_ospeed=B38400};
+int tcgetattr(int fd,struct termios*t){(void)fd;if(!t)return -1;*t=d;return 0;}int tcsetattr(int fd,int a,const struct termios*t){(void)fd;(void)a;if(t)d=*t;return 0;}int tcflush(int fd,int q){(void)fd;(void)q;return 0;}
+speed_t cfgetispeed(const struct termios*t){return t?t->c_ispeed:0;}speed_t cfgetospeed(const struct termios*t){return t?t->c_ospeed:0;}int cfsetispeed(struct termios*t,speed_t s){if(!t)return-1;t->c_ispeed=s;return 0;}int cfsetospeed(struct termios*t,speed_t s){if(!t)return-1;t->c_ospeed=s;return 0;}

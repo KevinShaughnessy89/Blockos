@@ -1,3 +1,11 @@
 #pragma once
-struct utsname { char sysname[65], nodename[65], release[65], version[65], machine[65]; };
-int uname(struct utsname*);
+#define _UTSNAME_LENGTH 65
+struct utsname {
+    char sysname[_UTSNAME_LENGTH];
+    char nodename[_UTSNAME_LENGTH];
+    char release[_UTSNAME_LENGTH];
+    char version[_UTSNAME_LENGTH];
+    char machine[_UTSNAME_LENGTH];
+    char domainname[_UTSNAME_LENGTH];
+};
+int uname(struct utsname *u);
