@@ -47,7 +47,7 @@ static uint64_t pci_get_bar(
 PciSubsystem::PciSubsystem()
     : registered_count(0)
 {
-    for (uint32_t i = 0; i < 64; ++i) {
+    for (uint32_t i = 0; i < 256; ++i) {
         device_registry[i].bus = 0;
         device_registry[i].slot = 0;
         device_registry[i].func = 0;
@@ -248,7 +248,7 @@ void PciSubsystem::scan_all_pci_buses()
 {
     registered_count = 0;
 
-    for (uint32_t i = 0; i < 64; ++i)
+    for (uint32_t i = 0; i < 256; ++i)
         device_registry[i].is_valid = false;
 
     for (uint16_t bus = 0; bus < 256; ++bus) {
@@ -278,7 +278,7 @@ void PciSubsystem::scan_all_pci_buses()
                  func < functions;
                  ++func) {
 
-                if (registered_count >= 64)
+                if (registered_count >= 256)
                     return;
 
                 PciDevice dev;

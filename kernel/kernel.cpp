@@ -1,3 +1,4 @@
+#include "drivers/hardware_autoprobe.hpp"
 #include "allocator.hpp"
 #include "arch/86_64x/hardware_tables.hpp"
 #include "backbuffer.h"
@@ -1055,6 +1056,10 @@ extern "C" EFI_STATUS EFIAPI efi_main(
 
     // Discover PCIe ECAM from ACPI MCFG before leaving firmware services.
     configure_pci_ecam(SystemTable);
+
+    /* Bring up as many compatible hardware backends as possible before
+       ExitBootServices(). Every backend is best-effort and may fail safely. */
+    blockos_hw::pre_exit_bootstrap();
 
 #ifdef BLOCKOS_SERVER_MODE
     // Start secondary CPUs before the final memory-map query so their

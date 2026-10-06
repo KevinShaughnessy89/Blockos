@@ -3,8 +3,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MAX_DEVICES 64
-#define MAX_DRIVERS 64
+#define MAX_DEVICES 256
+#define MAX_DRIVERS 128
 
 enum DeviceType {
     DEV_TYPE_UNKNOWN = 0,

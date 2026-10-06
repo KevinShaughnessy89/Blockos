@@ -138,6 +138,9 @@ EXCLUDED_SRC := \
 SRC := $(filter-out $(EXCLUDED_SRC), \
 	$(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp)))
 
+# Hardware portability: include the real nested network drivers.
+SRC += $(wildcard drivers/net/*.cpp)
+
 SRC += kernel/cmd/cmd_ata.cpp
 SRC += kernel/cmd/cmd_forth.cpp
 

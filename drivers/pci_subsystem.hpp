@@ -26,7 +26,7 @@ struct PciDevice {
 
 class PciSubsystem {
 private:
-    PciDevice device_registry[64];
+    PciDevice device_registry[256];
     uint32_t registered_count;
 
     uint16_t pci_config_read_word(
