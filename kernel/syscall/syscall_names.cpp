@@ -91,10 +91,16 @@ static constexpr const char* NAMES[] = {
     "sendmsg",
     "recvmsg",
     "rseq",
-    "setpgid",
-    "getpgid",
-    "setsid",
     "fork",
+    "vfork",
+    "dup3",
+    "madvise",
+    "gettimeofday",
+    "uname",
+    "getrlimit",
+    "setrlimit",
+    "sched_getaffinity",
+    "fstatat",
 };
 
 const char* syscall_name(std::uint64_t nr) {

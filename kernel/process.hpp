@@ -12,11 +12,12 @@ struct RuntimeFd {
     enum Kind : uint8_t { None = 0, Tty, File, Directory, Device, UnixSocket };
     bool used;
     Kind kind;
-    uint16_t flags;
+    uint32_t flags;
     uint32_t object;
     const uint8_t* data;
     uint64_t size;
     uint64_t off;
+    char path[256];
 };
 
 constexpr size_t MAX_RUNTIME_FDS = 128;
@@ -33,14 +34,16 @@ struct Process {
      * and saved ring3 frames. */
     Process* fd_owner;
     uint64_t parent_pid;
-    uint64_t pgid;
-    uint64_t sid;
     uint64_t tid;
     uint64_t fs_base;
     uint64_t wake_deadline_ms;
     uint64_t exit_code;
     uint64_t clear_tid;
     bool is_thread;
+    bool vfork_child;
+    uint64_t vfork_parent_pid;
+    uint64_t wait_target_pid;
+    uint64_t wait_status_ptr;
     char name[64];
     char cwd[256];
     RuntimeFd fds[MAX_RUNTIME_FDS];
@@ -79,6 +82,7 @@ void run_scheduler();
 
 bool terminate(Process* proc);
 Process* current();
+Process* fork_like(Process* parent, const TrapFrame& parent_frame, bool vfork_mode);
 RuntimeFd* fds(Process* p);
 void set_current(Process* p);
 Process* get(uint64_t pid);

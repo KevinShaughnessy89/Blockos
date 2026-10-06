@@ -15,3 +15,9 @@
 
 void* mmap(void* addr, size_t length, int prot, int flags, int fd, long offset);
 int   munmap(void* addr, size_t length);
+
+int madvise(void*, size_t, int);
+#define MADV_NORMAL 0
+#define MADV_RANDOM 1
+#define MADV_SEQUENTIAL 2
+#define MADV_DONTNEED 4

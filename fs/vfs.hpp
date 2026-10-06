@@ -54,6 +54,8 @@ bool write_file(
     const uint8_t* data,
     uint32_t size
 );
+bool write_file_at(const char* name, uint64_t offset, const uint8_t* data, uint32_t size, bool append, uint64_t* new_offset);
+bool truncate_file(const char* name, uint32_t size);
 
 bool exists(const char* path);
 bool is_directory(const char* path);
@@ -63,7 +65,6 @@ bool create_directory(const char* path);
 size_t directory_entry_count(const char* directory);
 const char* directory_entry_name(const char* directory, size_t index);
 bool remove_file(const char* path);
-bool remove_directory(const char* path);
 bool rename_path(const char* old_path, const char* new_path);
 
 bool create_device_node(

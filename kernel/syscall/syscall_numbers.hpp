@@ -93,10 +93,16 @@ enum Number : std::uint64_t {
     SYS_sendmsg = 85,
     SYS_recvmsg = 86,
     SYS_rseq = 87,
-    SYS_setpgid = 88,
-    SYS_getpgid = 89,
-    SYS_setsid = 90,
-    SYS_fork = 91,
+    SYS_fork = 88,
+    SYS_vfork = 89,
+    SYS_dup3 = 90,
+    SYS_madvise = 91,
+    SYS_gettimeofday = 92,
+    SYS_uname = 93,
+    SYS_getrlimit = 94,
+    SYS_setrlimit = 95,
+    SYS_sched_getaffinity = 96,
+    SYS_fstatat = 97,
     SYS_unknown = 0xFFFFFFFFFFFFFFFFULL
 };
 

@@ -589,6 +589,19 @@ bool write_file(
     return true;
 }
 
+bool write_file_at(const char* name, uint64_t offset, const uint8_t* data, uint32_t size, bool append, uint64_t* new_offset)
+{
+    if(!name || (size && !data)) return false;
+    vfs_entry* entry=find_entry(name); if(!entry){ if(!create_file(name,nullptr,0)) return false; entry=find_entry(name); }
+    if(!entry || entry->type!=NODE_FILE) return false;
+    uint64_t base=append?entry->size:offset, end=base+size; if(end>0xffffffffULL) return false;
+    uint32_t old_size=entry->size,new_size=(uint32_t)(end>old_size?end:old_size);
+    uint8_t* buf=nullptr; if(new_size){ buf=static_cast<uint8_t*>(allocator::alloc(new_size)); if(!buf) return false; for(uint32_t i=0;i<new_size;i++) buf[i]=0; if(entry->data) for(uint32_t i=0;i<old_size;i++) buf[i]=entry->data[i]; for(uint32_t i=0;i<size;i++) buf[(size_t)base+i]=data[i]; }
+    bool ok=write_file(name,buf,new_size); if(buf) allocator::free(buf); if(!ok) return false; if(new_offset)*new_offset=end; return true;
+}
+
+bool truncate_file(const char* name,uint32_t size){ return name && write_file(name,nullptr,size); }
+
 bool exists(const char* path)
 {
     return find_entry(path) != nullptr;
@@ -695,33 +708,6 @@ bool remove_file(const char* path)
             return true;
         }
         prev = cur; cur = cur->next;
-    }
-    return false;
-}
-
-bool remove_directory(const char* path)
-{
-    if (!path) return false;
-    char normalized[VFS_MAX_PATH];
-    if (!normalize_path(path, normalized, sizeof(normalized))) return false;
-    if (string_equal(normalized, "/")) return false;
-    vfs_entry* target = find_entry(normalized);
-    if (!target || target->type != NODE_DIRECTORY) return false;
-    size_t n = string_length(normalized);
-    for (vfs_entry* e = vfs_root; e; e = e->next) {
-        if (!e->name || e == target) continue;
-        if (strncmp(e->name, normalized, n) == 0 && e->name[n] == '/') return false;
-    }
-    vfs_entry* cur = vfs_root;
-    vfs_entry* prev = nullptr;
-    while (cur) {
-        if (cur == target) {
-            if (prev) prev->next = cur->next; else vfs_root = cur->next;
-            free_entry(cur);
-            return true;
-        }
-        prev = cur;
-        cur = cur->next;
     }
     return false;
 }

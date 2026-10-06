@@ -65,8 +65,6 @@ Process* spawn(const void* elf, size_t size, const char* path) {
     p->pml4 = pml4;
     p->fd_owner = p;
     p->parent_pid = 0;
-    p->pgid = p->pid;
-    p->sid = p->pid;
     p->tid = p->pid;
     p->fs_base = 0;
     p->exit_code = 0;
@@ -174,6 +172,48 @@ bool terminate(Process* p) {
 }
 
 Process* current() { return cur; }
+
+Process* fork_like(Process* parent, const TrapFrame& parent_frame, bool vfork_mode) {
+    if (!parent) return nullptr;
+    Process* child = free_slot();
+    if (!child) return nullptr;
+
+    /* Clang's driver follows fork/vfork with execve almost immediately.
+     * BlockOS therefore uses a vfork-like shared address space here instead
+     * of pretending that we already have a full copy-on-write VM subsystem.
+     * The parent is blocked by the syscall layer until the child execs or
+     * exits. */
+    memset(child, 0, sizeof(*child));
+    child->state = State::EMPTY;
+    child->pid = next_pid++;
+    child->pml4 = parent->pml4;
+    child->fd_owner = child;
+    child->parent_pid = parent->pid;
+    child->tid = child->pid;
+    child->fs_base = parent->fs_base;
+    child->brk_base = parent->brk_base;
+    child->brk_current = parent->brk_current;
+    child->mmap_next = parent->mmap_next;
+    child->has_interp = parent->has_interp;
+    child->real_entry = parent->real_entry;
+    child->wake_deadline_ms = 0;
+    child->exit_code = 0;
+    child->clear_tid = 0;
+    child->is_thread = false;
+    child->vfork_child = vfork_mode;
+    child->vfork_parent_pid = parent->pid;
+    memcpy(child->name, parent->name, sizeof(child->name));
+    memcpy(child->cwd, parent->cwd, sizeof(child->cwd));
+    memcpy(child->fds, parent->fds, sizeof(child->fds));
+    memcpy(child->signal_handlers, parent->signal_handlers, sizeof(child->signal_handlers));
+    memcpy(child->signal_flags, parent->signal_flags, sizeof(child->signal_flags));
+    child->signal_mask = parent->signal_mask;
+    child->saved_frame = parent_frame;
+    child->saved_frame.rax = 0;
+    child->frame_valid = true;
+    child->state = State::READY;
+    return child;
+}
 
 RuntimeFd* fds(Process* p) {
     if (!p) return nullptr;
