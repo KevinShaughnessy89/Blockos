@@ -12,6 +12,7 @@ static size_t string_length(const char* s)
     size_t n = 0;
     while (s[n] != '\0')
         ++n;
+
     return n;
 }
 
@@ -21,9 +22,11 @@ static bool string_equal(const char* a, const char* b)
         return false;
 
     size_t i = 0;
+
     while (a[i] != '\0' && b[i] != '\0') {
         if (a[i] != b[i])
             return false;
+
         ++i;
     }
 
@@ -33,7 +36,7 @@ static bool string_equal(const char* a, const char* b)
 static size_t ramfs_count()
 {
     const ramfile* first = __blockos_ramfs_start;
-    const ramfile* last = __blockos_ramfs_end;
+    const ramfile* last  = __blockos_ramfs_end;
 
     if (!first || !last || last < first)
         return 0;
@@ -43,7 +46,11 @@ static size_t ramfs_count()
 
 } // namespace
 
-extern "C" const uint8_t* ramfs_get(const char* name, uint32_t* size_out)
+
+extern "C"
+const uint8_t* ramfs_get(
+    const char* name,
+    uint32_t* size_out)
 {
     if (size_out)
         *size_out = 0;
@@ -51,18 +58,25 @@ extern "C" const uint8_t* ramfs_get(const char* name, uint32_t* size_out)
     if (!name)
         return nullptr;
 
-    const size_t wanted_length = string_length(name);
+    const size_t wanted_length =
+        string_length(name);
+
     if (wanted_length == 0)
         return nullptr;
 
-    const size_t count = ramfs_count();
+    const size_t count =
+        ramfs_count();
 
     for (size_t i = 0; i < count; ++i) {
-        const ramfile& file = __blockos_ramfs_start[i];
+        const ramfile& file =
+            __blockos_ramfs_start[i];
+
         if (!file.name || !file.data)
             continue;
 
-        if (!string_equal(file.name, name))
+        if (!string_equal(
+                file.name,
+                name))
             continue;
 
         if (size_out)
@@ -74,18 +88,6 @@ extern "C" const uint8_t* ramfs_get(const char* name, uint32_t* size_out)
     return nullptr;
 }
 
-/*
- * Fallback table: the generated RAMFS (scripts/generate_ramfs.py ->
- * fs/ramfs_generated.S) would replace this empty table (drop it then). Until it is
- * wired into the Makefile the table is empty, instead of leaving the symbols undefined (which made the
- * kernel read from address 0).
- */
-extern "C" {
-extern const struct ramfile __blockos_ramfs_start[1];
-extern const struct ramfile __blockos_ramfs_start[1] = {};
-extern const struct ramfile __blockos_ramfs_end[]
-    __attribute__((alias("__blockos_ramfs_start")));
-}
 
 namespace ramfs {
 
@@ -98,12 +100,17 @@ const char* name_at(size_t idx)
 {
     if (idx >= ramfs_count())
         return nullptr;
+
     return __blockos_ramfs_start[idx].name;
 }
 
-const uint8_t* get(const char* name, uint32_t* size_out)
+const uint8_t* get(
+    const char* name,
+    uint32_t* size_out)
 {
-    return ramfs_get(name, size_out);
+    return ramfs_get(
+        name,
+        size_out);
 }
 
 } // namespace ramfs
