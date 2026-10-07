@@ -258,6 +258,66 @@ bool ethernet_send(
 
 
 // ------------------------------------------------------------
+// Declared in net.hpp and used by arp/ipv4/ipv6/icmp/dhcp
+// ------------------------------------------------------------
+
+uint16_t checksum(const void* data, size_t len)
+{
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    uint32_t sum = 0;
+
+    while (len > 1)
+    {
+        sum += static_cast<uint32_t>((p[0] << 8) | p[1]);
+        p += 2;
+        len -= 2;
+    }
+
+    if (len == 1)
+        sum += static_cast<uint32_t>(p[0] << 8);
+
+    while (sum >> 16)
+        sum = (sum & 0xFFFFu) + (sum >> 16);
+
+    // Returned in host order of the big-endian sum; callers store it with htons-free
+    // byte layout identical to the on-wire representation.
+    uint16_t result = static_cast<uint16_t>(~sum);
+    return htons(result);
+}
+
+
+void set_ipv4(const IPv4Address& ip,
+              const IPv4Address& mask,
+              const IPv4Address& gw)
+{
+    g_ip   = ip;
+    g_mask = mask;
+    g_gw   = gw;
+}
+
+
+bool send_frame(const uint8_t dst[6],
+                uint16_t ethertype,
+                const void* payload,
+                size_t payload_len)
+{
+    if (dst == nullptr)
+        return false;
+
+    MacAddress destination{};
+    memcpy(destination.b, dst, 6);
+
+    return ethernet_send(destination, ethertype, payload, payload_len);
+}
+
+
+void input_frame(const void* frame, size_t len)
+{
+    receive_packet(frame, len);
+}
+
+
+// ------------------------------------------------------------
 // Network state
 // ------------------------------------------------------------
 

@@ -21,19 +21,19 @@
 // Framebuffer blit deklarációk
 // -----------------------------------------------------------------------------
 
-extern "C" void bb_blit_to_fb(
-    void* fb,
-    const uint8_t* bb
-);
+/* The real blit functions live in drivers/backbuffer.cpp with C++ linkage and
+ * take Framebuffer*. These thin wrappers keep the void* call sites working. */
+static inline void bb_blit_to_fb(void* fb, const uint8_t* bb)
+{
+    bb_blit_to_fb(static_cast<Framebuffer*>(fb), bb);
+}
 
-extern "C" void bb_blit_rect_to_fb(
-    void* fb,
-    const uint8_t* bb,
-    int x,
-    int y,
-    int w,
-    int h
-);
+static inline void bb_blit_rect_to_fb(void* fb, const uint8_t* bb,
+                                      int x, int y, int w, int h)
+{
+    bb_blit_region_to_fb(static_cast<Framebuffer*>(fb), bb,
+                         (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h);
+}
 
 // -----------------------------------------------------------------------------
 // Egyszerű szövegkiíró helper

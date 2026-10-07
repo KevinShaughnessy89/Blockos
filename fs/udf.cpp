@@ -638,6 +638,19 @@ bool UDFReader::find_in_directory(uint32_t location, uint32_t partition,
     return false;
 }
 
+bool UDFReader::equal_name(const char* a, const char* b) const
+{
+    if (!a || !b) return false;
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) return false;
+        ++a; ++b;
+    }
+    return *a == *b;
+}
+
 bool UDFReader::path_component(const char* path, size_t* offset,
                                char* component, size_t component_size) const {
     if (!path || !offset || !component || component_size < 2) return false;

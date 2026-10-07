@@ -6,6 +6,19 @@ extern "C" void* blockos_mmap_allocate(size_t length);
 extern "C" int blockos_scheduler_fork();
 extern "C" void blockos_terminal_print(const char* text, size_t length);
 
+// Fallbacks until the real mmap allocator / fork support exist. Weak, so a real
+// implementation elsewhere in the kernel overrides them without link errors.
+extern "C" __attribute__((weak)) void* blockos_mmap_allocate(size_t length)
+{
+    (void)length;
+    return nullptr;
+}
+
+extern "C" __attribute__((weak)) int blockos_scheduler_fork()
+{
+    return -1;
+}
+
 // Linux-specifikus rendszerhívás számok x86_64 architektúrán
 #define SYS_WRITE      1
 #define SYS_MMAP       9

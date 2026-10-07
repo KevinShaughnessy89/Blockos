@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 
 // Run code while CPU CR3 is switched to the provided PML4 physical address.
 // This does not change privilege level (still runs in kernel mode). Use only for

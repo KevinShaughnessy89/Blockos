@@ -70,6 +70,17 @@ uint64_t timer_uptime_ms()
     return (uint64_t) timer_ticks * pit_divisor * 1000u / PIT_BASE;
 }
 
+/*
+ * kernel/preempt.cpp, kernel/user_syscall.cpp and net/ntp.cpp declare
+ * `extern "C" uint64_t timer_uptime_ms();`, while irq.hpp declares the C++
+ * version. Export the unmangled symbol as an alias of the same function.
+ */
+extern "C" uint64_t timer_uptime_ms_c_alias(void) __asm__("timer_uptime_ms");
+extern "C" uint64_t timer_uptime_ms_c_alias(void)
+{
+    return timer_uptime_ms();
+}
+
 
 // Called from assembly stub when timer IRQ occurs
 void pit_handler_c()

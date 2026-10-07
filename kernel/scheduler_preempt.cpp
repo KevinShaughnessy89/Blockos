@@ -681,3 +681,10 @@ void timer_irq_cb()
 
 
 } // namespace scheduler_preempt
+
+
+/* kernel/context_switch.S does `call task_exit` (unmangled C symbol). */
+extern "C" void task_exit()
+{
+    scheduler_preempt::task_exit();
+}

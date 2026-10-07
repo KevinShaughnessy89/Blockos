@@ -868,7 +868,9 @@ static void configure_pci_ecam(EFI_SYSTEM_TABLE* table)
  * ============================================================
  */
 
-extern "C" EFI_STATUS EFIAPI efi_main(
+/* crt0-efi-x86_64 calls efi_main with the System V ABI (rdi/rsi), so this must
+ * NOT be ms_abi (EFIAPI) even though GNU_EFI_USE_MS_ABI is defined. */
+extern "C" EFI_STATUS efi_main(
     EFI_HANDLE ImageHandle,
     EFI_SYSTEM_TABLE* SystemTable)
 {

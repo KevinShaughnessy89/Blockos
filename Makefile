@@ -114,14 +114,17 @@ LDFLAGS := \
 	-znocombreloc \
 	-T$(GNU_EFI_LDS) \
 	-shared \
-	-Bsymbolic
+	-Bsymbolic \
+	-z defs
 
 # ============================================================
 # SOURCE DIRECTORIES
 # ============================================================
 
 SRC_DIRS := \
+	arch/86_64x \
 	drivers \
+	drivers/nvme \
 	examples \
 	fs \
 	kernel \
@@ -158,6 +161,9 @@ SRC := $(filter-out $(EXCLUDED_SRC), \
 
 # Hardware portability: include nested NIC drivers.
 SRC += $(wildcard drivers/net/*.cpp)
+
+# No-op GuiEngine implementation (GuiEngine::render/draw_rect, `desktop`).
+SRC += gui.cpp
 
 SRC += kernel/cmd/cmd_ata.cpp
 SRC += kernel/cmd/cmd_forth.cpp

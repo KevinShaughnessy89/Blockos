@@ -73,3 +73,37 @@ extern "C" const uint8_t* ramfs_get(const char* name, uint32_t* size_out)
 
     return nullptr;
 }
+
+/*
+ * Fallback table: the generated RAMFS (scripts/generate_ramfs.py ->
+ * fs/ramfs_generated.S) would replace this empty table (drop it then). Until it is
+ * wired into the Makefile the table is empty, instead of leaving the symbols undefined (which made the
+ * kernel read from address 0).
+ */
+extern "C" {
+extern const struct ramfile __blockos_ramfs_start[1];
+extern const struct ramfile __blockos_ramfs_start[1] = {};
+extern const struct ramfile __blockos_ramfs_end[]
+    __attribute__((alias("__blockos_ramfs_start")));
+}
+
+namespace ramfs {
+
+size_t count()
+{
+    return ramfs_count();
+}
+
+const char* name_at(size_t idx)
+{
+    if (idx >= ramfs_count())
+        return nullptr;
+    return __blockos_ramfs_start[idx].name;
+}
+
+const uint8_t* get(const char* name, uint32_t* size_out)
+{
+    return ramfs_get(name, size_out);
+}
+
+} // namespace ramfs
