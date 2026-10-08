@@ -440,7 +440,16 @@ extern "C" void blockos_tty_set_output_callback(
     void (*callback)(const char* data, size_t length, void* user),
     void* user);
 
+extern "C" void blockos_tty_input_char(uint8_t c);
+extern "C" void blockos_tty_input_bytes(const void* data, size_t length);
+
+static Framebuffer* g_flush_fb = nullptr;
+static void* g_flush_backbuf = nullptr;
+
+static void flush_console();
+
 static Console* g_console_sink = nullptr;
+static Keymap g_tty_keymap;
 
 static void console_sink(const char* data, size_t length, void*)
 {
@@ -449,6 +458,125 @@ static void console_sink(const char* data, size_t length, void*)
 
     for (size_t i = 0; i < length; ++i)
         g_console_sink->putc(data[i]);
+
+    flush_console();
+}
+
+static void tty_send_escape(const char* sequence)
+{
+    blockos_tty_input_bytes(
+        sequence,
+        strlen(sequence));
+}
+
+static void route_keyboard_event_to_tty(
+    const blockos::input::Event& ev)
+{
+    if (ev.type != blockos::input::EVENT_KEYBOARD)
+        return;
+
+    KeyEvent kev{};
+    kev.scancode = static_cast<uint8_t>(ev.scancode & 0xFFu);
+    kev.is_pressed = ev.pressed != 0;
+    kev.is_extended = ev.extended != 0;
+
+    const KeyPress press =
+        g_tty_keymap.translate(kev);
+
+    if (!kev.is_pressed)
+        return;
+
+    if (press.ch != 0)
+    {
+        blockos_tty_input_char(
+            static_cast<uint8_t>(press.ch));
+        return;
+    }
+
+    switch (press.key)
+    {
+        case NonCharacterKey::Backspace:
+            blockos_tty_input_char(0x7F);
+            break;
+
+        case NonCharacterKey::Enter:
+            blockos_tty_input_char('\n');
+            break;
+
+        case NonCharacterKey::Tab:
+            blockos_tty_input_char('\t');
+            break;
+
+        case NonCharacterKey::Escape:
+            blockos_tty_input_char(0x1B);
+            break;
+
+        case NonCharacterKey::Delete:
+            tty_send_escape("\x1b[3~");
+            break;
+
+        case NonCharacterKey::Up:
+            tty_send_escape("\x1b[A");
+            break;
+
+        case NonCharacterKey::Down:
+            tty_send_escape("\x1b[B");
+            break;
+
+        case NonCharacterKey::Right:
+            tty_send_escape("\x1b[C");
+            break;
+
+        case NonCharacterKey::Left:
+            tty_send_escape("\x1b[D");
+            break;
+
+        case NonCharacterKey::Home:
+            tty_send_escape("\x1b[H");
+            break;
+
+        case NonCharacterKey::End:
+            tty_send_escape("\x1b[F");
+            break;
+
+        case NonCharacterKey::PageUp:
+            tty_send_escape("\x1b[5~");
+            break;
+
+        case NonCharacterKey::PageDown:
+            tty_send_escape("\x1b[6~");
+            break;
+
+        case NonCharacterKey::None:
+        default:
+            break;
+    }
+}
+
+static void service_tty_input()
+{
+    blockos::input::poll_hardware();
+
+    blockos::input::Event events[32]{};
+
+    for (;;)
+    {
+        const size_t n =
+            blockos::input::read(
+                events,
+                sizeof(events) / sizeof(events[0]));
+
+        if (n == 0)
+            break;
+
+        for (size_t i = 0; i < n; ++i)
+            route_keyboard_event_to_tty(events[i]);
+    }
+}
+
+extern "C" void blockos_kernel_poll_input()
+{
+    service_tty_input();
 }
 
 static void stdio_sink(const char* data, size_t length)
@@ -480,9 +608,6 @@ AtaPio& ata_fs_disk()
 {
     return g_ata_fs;
 }
-
-static Framebuffer* g_flush_fb = nullptr;
-static void* g_flush_backbuf = nullptr;
 
 static void flush_console()
 {
@@ -1188,9 +1313,8 @@ extern "C" EFI_STATUS efi_main(
      * ========================================================
      */
 
-    blockos_tty_init();
-
     vfs_init_from_ramfs();
+    blockos_tty_init();
     blockos::input::init();
 
     /*
@@ -1265,11 +1389,33 @@ extern "C" EFI_STATUS efi_main(
      * Keep block-device initialization because the filesystem/VFS
      * layer may depend on the discovered storage devices.
      *
-     * The Console object is only an internal output sink here;
-     * it is NOT attached to a framebuffer window.
+     * The Console is the framebuffer-backed TTY output sink.
      */
 
     Console console;
+
+    if (have_gop)
+    {
+        console.attach(
+            0,
+            0,
+            static_cast<int>(fb.Width),
+            static_cast<int>(fb.Height));
+    }
+    else
+    {
+        console.attach(0, 0, 640, 480);
+    }
+
+    console.set_colors(
+        0x00FFFFFF,
+        0x00000000);
+    console.clear();
+
+    g_console_sink = &console;
+    blockos_tty_set_output_callback(
+        console_sink,
+        nullptr);
 
 #ifndef BLOCKOS_SERVER_MODE
     init_block_devices(
@@ -1352,7 +1498,25 @@ extern "C" EFI_STATUS efi_main(
         }
 
         if (dismiss)
+        {
+            /*
+             * Clear the boot splash from the real framebuffer before
+             * entering userspace. The splash is rendered through the
+             * backbuffer, so simply breaking out of the loop would leave
+             * the last splash frame visible on the GOP framebuffer.
+             */
+            bb_clear(
+                (uint8_t*) backbuf,
+                fb.Width,
+                fb.Height,
+                0x00000000);
+
+            bb_blit_to_fb(
+                &fb,
+                (const uint8_t*) backbuf);
+
             break;
+        }
 
         __asm__ volatile("pause");
     }
@@ -1409,8 +1573,10 @@ extern "C" EFI_STATUS efi_main(
 
     /*
      * Enter ring3 and run /bin/sh as the first userspace process.
-     * This call should not return during normal operation.
+     * Keyboard input is also serviced from the userspace syscall path
+     * through blockos_kernel_poll_input().
      */
+    service_tty_input();
 
     process::run(
         shell_process);
