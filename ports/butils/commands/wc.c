@@ -1,0 +1,6 @@
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+static void countfd(int fd,const char*name,int opts,unsigned long *tl,unsigned long *tw,unsigned long *tb,int totalfiles){char c;unsigned long l=0,w=0,b=0;int inword=0;for(;;){ssize_t n=read(fd,&c,1);if(n<=0)break;b++;if(c=='\n')l++;if(c==' '||c=='\t'||c=='\n'||c=='\r'||c=='\v'||c=='\f')inword=0;else if(!inword){w++;inword=1;}}if(opts&1)printf("%lu ",l);if(opts&2)printf("%lu ",w);if(opts&4)printf("%lu ",b);if(name)printf("%s",name);printf("\n");*tl+=l;*tw+=w;*tb+=b;(void)totalfiles;}
+int main(int argc,char**argv){int i=1,opts=0;while(i<argc&&argv[i][0]=='-'&&argv[i][1]){for(const char*p=argv[i]+1;*p;p++){if(*p=='l')opts|=1;else if(*p=='w')opts|=2;else if(*p=='c'||*p=='m')opts|=4;else return 2;}i++;}if(!opts)opts=7;int nf=argc-i;unsigned long tl=0,tw=0,tb=0;if(!nf){countfd(0,0,opts,&tl,&tw,&tb,0);return 0;}for(int j=i;j<argc;j++){if(!strcmp(argv[j],"-"))countfd(0,0,opts,&tl,&tw,&tb,nf);else{int fd=open(argv[j],O_RDONLY);if(fd<0){write(2,"wc: open failed\n",16);continue;}countfd(fd,argv[j],opts,&tl,&tw,&tb,nf);close(fd);}}if(nf>1){if(opts&1)printf("%lu ",tl);if(opts&2)printf("%lu ",tw);if(opts&4)printf("%lu ",tb);printf("total\n");}return 0;}

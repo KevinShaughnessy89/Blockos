@@ -1,0 +1,5 @@
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int main(int argc,char **argv){const char *ip=0,*op=0;long bs=512,count=-1;for(int i=1;i<argc;i++){if(!strncmp(argv[i],"if=",3))ip=argv[i]+3;else if(!strncmp(argv[i],"of=",3))op=argv[i]+3;else if(!strncmp(argv[i],"bs=",3))bs=strtol(argv[i]+3,0,10);else if(!strncmp(argv[i],"count=",6))count=strtol(argv[i]+6,0,10);else{write(2,"Usage: dd [if=FILE] [of=FILE] [bs=N] [count=N]\n",47);return 2;}}if(bs<1||bs>65536||count< -1){write(2,"dd: invalid block size or count\n",32);return 2;}int in=ip?open(ip,O_RDONLY):0;if(in<0){write(2,"dd: cannot open input\n",22);return 1;}int out=op?open(op,O_WRONLY|O_CREAT|O_TRUNC,0666):1;if(out<0){if(ip)close(in);write(2,"dd: cannot open output\n",23);return 1;}char *b=malloc((size_t)bs);if(!b)return 1;long blocks=0;int rc=0;while(count<0||blocks<count){ssize_t n=read(in,b,(size_t)bs);if(n==0)break;if(n<0){rc=1;break;}ssize_t p=0;while(p<n){ssize_t w=write(out,b+p,(size_t)(n-p));if(w<=0){rc=1;break;}p+=w;}if(rc)break;++blocks;}free(b);if(ip)close(in);if(op)close(out);return rc;}
